@@ -21,9 +21,7 @@ export const EA_POSITIONS: readonly EaPositionOption[] = [
   { id: "26", shortLabel: "SD", label: "Segundo delantero", group: "Ataque" },
   { id: "27", shortLabel: "EI", label: "Extremo izquierdo", group: "Ataque" },
   { id: "28", shortLabel: "ED", label: "Extremo derecho", group: "Ataque" },
-  { id: "29", shortLabel: "MCO", label: "Mediapunta", group: "Centrocampista" },
-  { id: "30", shortLabel: "DFC", label: "Defensa central", group: "Defensa" },
-  { id: "31", shortLabel: "POR", label: "Portero", group: "Portero" }
+  { id: "29", shortLabel: "MCO", label: "Mediapunta", group: "Centrocampista" }
 ] as const;
 
 export const EA_POSITION_BY_ID = new Map(EA_POSITIONS.map((position) => [position.id, position]));

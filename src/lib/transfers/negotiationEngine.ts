@@ -8,7 +8,7 @@ export type NegotiationQuoteCategory =
   | "accepted"
   | "maxTensionHangup";
 
-const QUOTE_BANKS: Record<NegotiationQuoteCategory, string[]> = {
+export const QUOTE_BANKS: Record<NegotiationQuoteCategory, string[]> = {
   greeting: [
     "Dígame. Habla el mánager. Me han comentado que están interesados en negociar por {player}. ¿Cuál es su propuesta inicial?",
     "Hola, estoy ocupado preparando la sesión de entrenamiento, pero los escucho. ¿Cuánto ofrecen formalmente por {player}?",

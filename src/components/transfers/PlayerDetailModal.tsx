@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import type { TransferPlayerResult } from "@/lib/transfers/search";
 import type { PlayerScoutingData } from "@/lib/scouting/getPlayerScoutingData";
 import { addClauseBuyoutEmail } from "@/lib/inbox/inboxStore";
+import { ClubNegotiationModal } from "./ClubNegotiationModal";
 
 const statLabels = [
   ["pace", "PAC"],
@@ -55,6 +56,7 @@ export default function PlayerDetailModal({
 
   const teamNameLower = (player.currentTeam?.name || "").toLowerCase();
   const teamShortUpper = (player.currentTeam?.shortName || "").toUpperCase();
+  const sellerTeamName = player.currentTeam?.name || "Club Propietario";
   const isOwnPlayer = teamNameLower.includes("northbridge") || teamShortUpper === "NFC";
 
   useEffect(() => {
@@ -135,13 +137,12 @@ export default function PlayerDetailModal({
           setCurrentBudget(data.remainingBudget);
         }
 
-        // Generate negotiation email in user's Mailbox!
         addClauseBuyoutEmail({
           id: player.id,
           name: player.name,
           avatarUrl: player.avatarUrl,
           releaseClause: player.releaseClause,
-          currentTeamName: player.currentTeam?.name
+          currentTeamName: sellerTeamName
         });
 
         setBuyoutResultMsg(
@@ -163,10 +164,31 @@ export default function PlayerDetailModal({
     setActiveDialog("NEGOTIATE");
   };
 
+  const handleAgreementReached = async (agreedPrice: number) => {
+    // Si la oferta pactada supera el presupuesto del usuario, se ajusta al límite máximo disponible
+    const finalPrice = Math.min(agreedPrice, currentBudget);
+
+    try {
+      await fetch("/api/mailbox/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: `Acuerdo Alcanzado: ${player.name}`,
+          content: `El club ${sellerTeamName} ha aceptado la oferta de ${finalPrice.toLocaleString("es-ES")} € por el traspaso de ${player.name}. Accede a la sección de contratos para formalizar el sueldo del jugador.`,
+          category: "TRANSFER_AGREEMENT",
+          playerId: player.id,
+          agreedPrice: finalPrice,
+        }),
+      });
+    } catch (error) {
+      console.error("Error al registrar el acuerdo en la bandeja de entrada:", error);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-[90] flex items-center justify-center overflow-y-auto bg-black/65 p-4 backdrop-blur-sm">
       <div className="relative w-full max-w-2xl rounded-2xl bg-white p-6 shadow-2xl transition-all">
-        {/* Close Button */}
+        {/* Botón de Cierre */}
         <button
           onClick={onClose}
           className="absolute right-4 top-4 grid h-8 w-8 place-items-center rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-700"
@@ -175,7 +197,7 @@ export default function PlayerDetailModal({
           ✕
         </button>
 
-        {/* Modal Header & Main Info */}
+        {/* Encabezado del Modal */}
         <div className="flex flex-wrap items-center gap-4 border-b border-slate-100 pb-5">
           <div className="relative h-20 w-20 overflow-hidden rounded-full bg-slate-100 shadow-inner">
             <Image
@@ -233,23 +255,19 @@ export default function PlayerDetailModal({
               <span className="text-slate-500">Cláusula {formatPrice(player.releaseClause)}</span>
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-slate-500">
-              {player.currentTeam ? (
-                <span className="flex items-center gap-1.5 font-medium">
-                  {player.currentTeam.imageUrl ? (
-                    <img src={player.currentTeam.imageUrl} alt="" className="h-4 w-4 object-contain" />
-                  ) : null}
-                  {player.currentTeam.name}
-                </span>
-              ) : (
-                <span>Agente libre</span>
-              )}
+              <span className="flex items-center gap-1.5 font-medium">
+                {player.currentTeam?.imageUrl ? (
+                  <img src={player.currentTeam.imageUrl} alt="" className="h-4 w-4 object-contain" />
+                ) : null}
+                {sellerTeamName}
+              </span>
               <span>Potencial: <strong className="text-slate-800">{player.potential}</strong></span>
             </div>
           </div>
         </div>
 
-        {/* 6 Core Stats */}
-        <div className="grid grid-cols-3 gap-3 sm:grid-cols-6 bg-slate-50 p-3 rounded-xl border border-slate-100">
+        {/* 6 Estadísticas Principales */}
+        <div className="grid grid-cols-3 gap-3 sm:grid-cols-6 bg-slate-50 p-3 rounded-xl border border-slate-100 my-4">
           {statLabels.map(([key, label]) => (
             <div key={key} className="min-w-0 text-center">
               <div className="flex justify-between text-[11px] font-bold text-slate-500">
@@ -266,8 +284,8 @@ export default function PlayerDetailModal({
           ))}
         </div>
 
-        {/* Lower Section - Last 7 Matches Scouting */}
-        <div className="space-y-3">
+        {/* Sección de Ojeo */}
+        <div className="space-y-3 mb-4">
           <h3 className="text-sm font-bold uppercase tracking-wider text-slate-500">
             Estadísticas en los últimos 7 partidos
           </h3>
@@ -278,11 +296,10 @@ export default function PlayerDetailModal({
             </div>
           ) : !scouting || !scouting.hasData || scouting.matchesPlayed === 0 ? (
             <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-5 text-center font-medium text-amber-900 shadow-sm">
-              Aún no se ha podido ojear a este jugador, intentelo más tarde
+              Aún no se ha podido ojear a este jugador, intente más tarde
             </div>
           ) : (
             <div className="space-y-3">
-              {/* Match Stats Grid */}
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 <div className="rounded-xl border border-slate-200 bg-white p-3 text-center shadow-sm">
                   <span className="block text-2xl font-black text-slate-800">{scouting.goals}</span>
@@ -302,7 +319,6 @@ export default function PlayerDetailModal({
                 </div>
               </div>
 
-              {/* Position Distribution */}
               {scouting.positionPercentages.length > 0 && (
                 <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm">
                   <h4 className="mb-2 text-xs font-bold text-slate-500 uppercase">
@@ -328,7 +344,7 @@ export default function PlayerDetailModal({
           )}
         </div>
 
-        {/* Action Buttons Section */}
+        {/* Botones de Acción */}
         {isOwnPlayer ? (
           <div className="rounded-xl border border-slate-200 bg-slate-100 p-3.5 text-center font-bold text-slate-600">
             Este jugador ya pertenece a tu plantilla
@@ -339,19 +355,19 @@ export default function PlayerDetailModal({
               onClick={handleTransferClick}
               className="flex-1 rounded-xl bg-emerald-600 py-3 px-4 text-center font-bold text-white shadow hover:bg-emerald-700 active:scale-[0.99] transition"
             >
-              Contactar con el club para transferencia
+              Contactar con {sellerTeamName} para transferencia
             </button>
             <button
               onClick={handleLoanClick}
               className="flex-1 rounded-xl bg-indigo-600 py-3 px-4 text-center font-bold text-white shadow hover:bg-indigo-700 active:scale-[0.99] transition"
             >
-              Contactar con el club para cesión
+              Contactar con {sellerTeamName} para cesión
             </button>
           </div>
         )}
       </div>
 
-      {/* Sub-Modal: Clause Confirmation Dialog */}
+      {/* Sub-Modal: Confirmación de Cláusula */}
       {activeDialog === "CLAUSE_CONFIRM" && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl space-y-5 text-center">
@@ -359,7 +375,7 @@ export default function PlayerDetailModal({
               💶
             </div>
             <p className="text-base font-semibold text-slate-800">
-              El jugador tiene una clausula de {formatPrice(player.releaseClause)} ¿Quieres pagarla y saltarte las negociaciones?
+              El jugador tiene una cláusula de {formatPrice(player.releaseClause)}. ¿Quieres pagarla y saltarte las negociaciones con {sellerTeamName}?
             </p>
             <div className="flex justify-center gap-4 pt-2">
               <button
@@ -381,31 +397,26 @@ export default function PlayerDetailModal({
         </div>
       )}
 
-      {/* Sub-Modal: Negotiations Dialog */}
-      {activeDialog === "NEGOTIATE" && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl space-y-4 text-center">
-            <h4 className="text-lg font-bold text-slate-900">Negociaciones con el Club</h4>
-            <p className="text-sm text-slate-600">
-              Iniciando negociaciones con el club para el traspaso de <strong>{player.name}</strong>. Esta función se detallará más adelante.
-            </p>
-            <button
-              onClick={() => setActiveDialog("NONE")}
-              className="mt-3 rounded-xl bg-slate-900 py-2.5 px-6 font-bold text-white hover:bg-slate-800"
-            >
-              Entendido
-            </button>
-          </div>
-        </div>
-      )}
+      {/* Sub-Modal: Modal Telefónico de Negociación */}
+      <ClubNegotiationModal
+        isOpen={activeDialog === "NEGOTIATE"}
+        player={{
+          ...player,
+          teamId: player.currentTeam?.id,
+          teamName: sellerTeamName,
+        }}
+        maxOfferLimit={currentBudget}
+        onClose={() => setActiveDialog("NONE")}
+        onAgreementReached={handleAgreementReached}
+      />
 
-      {/* Sub-Modal: Loan Dialog */}
+      {/* Sub-Modal: Solicitud de Cesión */}
       {activeDialog === "LOAN" && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl space-y-4 text-center">
             <h4 className="text-lg font-bold text-slate-900">Solicitud de Cesión</h4>
             <p className="text-sm text-slate-600">
-              Contactando con el club para la cesión de <strong>{player.name}</strong>. Las condiciones de la cesión se acordarán en negociaciones posteriores.
+              Contactando con <strong>{sellerTeamName}</strong> para la cesión de <strong>{player.name}</strong>. Las condiciones de la cesión se acordarán en negociaciones posteriores.
             </p>
             <button
               onClick={() => setActiveDialog("NONE")}
@@ -417,7 +428,7 @@ export default function PlayerDetailModal({
         </div>
       )}
 
-      {/* Sub-Modal: Buyout Result Dialog */}
+      {/* Sub-Modal: Resultado de Cláusula */}
       {activeDialog === "BUYOUT_RESULT" && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl space-y-4 text-center">
