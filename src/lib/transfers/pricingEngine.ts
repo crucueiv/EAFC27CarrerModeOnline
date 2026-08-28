@@ -139,7 +139,7 @@ export function calculatePlayerWage(params: WageCalculationParams): number {
   const clubTier = 0.6 + (clamp(params.clubTier, 1, 5) - 1) * 0.2;
   const normalizedQuality = clamp((clamp(params.overall, 1, 99) - 50) / 49, 0, 1);
   const base = 20_000 + 800_000 * Math.pow(normalizedQuality, 4.5);
-  const wage = base * positionFactor(params.position) * reputation * clubTier * roleFactor(params.role) * performance.factor * profileFactor(params);
+  const wage = (base * positionFactor(params.position) * reputation * clubTier * roleFactor(params.role) * performance.factor * profileFactor(params)) / 4;
   return Math.min(610_000, Math.max(0, Math.round(wage / 100) * 100));
 }
 

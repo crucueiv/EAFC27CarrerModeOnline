@@ -295,7 +295,7 @@ function serializePlayer(player: SearchPlayer): TransferPlayerResult {
 function isDatabaseUnavailable(error: unknown): boolean {
   if (!error || typeof error !== "object" || !("code" in error)) return false;
   const code = (error as { code?: unknown }).code;
-  return code === "P1001" || code === "P1003" || code === "P1017";
+  return code === "P1001" || code === "P1003" || code === "P1017" || code === "P2021" || code === "P2022";
 }
 
 function hydrationErrorMessage(error: unknown): string {

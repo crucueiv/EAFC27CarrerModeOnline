@@ -19,6 +19,16 @@ const nextConfig = {
         protocol: "https",
         hostname: "drop-assets.ea.com",
         pathname: "/**"
+      },
+      {
+        protocol: "https",
+        hostname: "media.api-sports.io",
+        pathname: "/**"
+      },
+      {
+        protocol: "https",
+        hostname: "v3.football.api-sports.io",
+        pathname: "/**"
       }
     ]
   }

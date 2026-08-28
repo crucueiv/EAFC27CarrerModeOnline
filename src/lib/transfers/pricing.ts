@@ -53,5 +53,6 @@ export function calculatePlayerValue(player: Player, context: PricingContext = {
 
 export function calculateWeeklySalary(player: Player, context: PricingContext = {}): number {
   const value = calculatePlayerValue(player, context);
-  return Math.max(500, Math.round((value * 0.012 * roleFactor(context.role)) / 100) * 100);
+  const salary = (value * 0.012 * roleFactor(context.role)) / 4;
+  return Math.max(500, Math.round(salary / 100) * 100);
 }

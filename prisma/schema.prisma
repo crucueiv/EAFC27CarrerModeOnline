@@ -113,14 +113,17 @@ model League {
 model Team {
   id               String       @id @default(cuid())
   eaId             String?      @unique
+  apiSportsId      Int?         @unique
   name             String
   normalizedName   String @default("")
   shortName        String
   imageUrl         String?
+  budget           Int          @default(50000000)
   leagueId         String?
   managerId        String?
   league           League?      @relation(fields: [leagueId], references: [id])
   manager          User?        @relation("TeamManager", fields: [managerId], references: [id])
+  managerProfile   Manager?     @relation("TeamRealManager")
   rosters          Roster[]
   homeMatches      Match[]      @relation("HomeTeam")
   awayMatches      Match[]      @relation("AwayTeam")
@@ -129,6 +132,18 @@ model Team {
   participants     TournamentParticipant[]
   matchStats       MatchStat[]
   @@index([normalizedName])
+}
+
+model Manager {
+  id          String   @id @default(cuid())
+  apiSportsId Int?     @unique
+  name        String
+  nationality String?
+  avatarUrl   String?
+  teamId      String   @unique
+  team        Team     @relation("TeamRealManager", fields: [teamId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 
 model Country {
@@ -213,6 +228,7 @@ model Season {
   tournaments   Tournament[]
   transfers     Transfer[]
   currentWeek   Int           @default(1)
+  isTransferWindowOpen Boolean @default(true)
   @@index([careerGroupId, status])
 }
 
@@ -269,6 +285,7 @@ model MatchStat {
   yellowCards Int     @default(0)
   redCards    Int     @default(0)
   rating      Float   @default(6.0)
+  positionPlayed String?
   match       Match   @relation(fields: [matchId], references: [id], onDelete: Cascade)
   player      Player  @relation("MatchPlayerStats", fields: [playerId], references: [id])
   team        Team    @relation(fields: [teamId], references: [id])

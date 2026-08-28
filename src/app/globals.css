@@ -81,19 +81,19 @@ a {
     transparent 80%
   );
   pointer-events: none;
-  z-index: 10;
+  z-index: 1;
   animation: elite-metallic-shine 3.5s infinite cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .elite-rating-ring svg {
   position: relative;
-  z-index: 5;
+  z-index: 1;
 }
 
 .elite-rating-ring span {
   position: absolute;
   inset: 0;
-  z-index: 20;
+  z-index: 2;
   display: grid;
   place-items: center;
   color: #000000 !important;
