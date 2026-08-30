@@ -1,12 +1,10 @@
 import type { Prisma, Player } from "@prisma/client";
 import { demoTransferPlayers } from "@/lib/demoData";
 import { hasDatabaseUrl, prisma } from "@/lib/prisma";
-import { fetchEaRatings, type EaRatingRecord } from "@/lib/ratings/eaClient";
 import {
   calculatePlayerValueAndClause
 } from "@/lib/transfers/pricingEngine";
 import { normalizeSearchText } from "@/lib/search/normalize";
-import { upsertEaRecords } from "@/lib/catalog/importEaCatalog";
 
 export type TransferSearchParams = {
   name?: string;
@@ -27,6 +25,7 @@ export type TransferSearchParams = {
   nationalityId?: string;
   nationalityName?: string;
   gender?: "MALE" | "FEMALE" | "ALL";
+  freeAgents?: boolean;
   page?: number;
   pageSize?: number;
 };
@@ -51,13 +50,21 @@ export type TransferPlayerResult = {
   stats: Record<"pace" | "shooting" | "passing" | "dribbling" | "defending" | "physical", number>;
   currentTeam: {
     id: string;
+    eaId: string | null;
     name: string;
     shortName: string;
     imageUrl: string | null;
-    league: { id: string; name: string; imageUrl: string | null } | null;
+    league: { id: string; name: string; imageUrl: string | null; eaId: string | null } | null;
   } | null;
   nationality: { id: string; name: string; code: string | null; flagUrl: string | null } | null;
 };
+
+function getLeagueIconUrl(league: { eaId: string | null; imageUrl: string | null }): string | null {
+  if (league.eaId) {
+    return `https://assets.easysbc.io/fc26/leagues/${league.eaId}.png`;
+  }
+  return league.imageUrl;
+}
 
 export type TransferSearchResult = {
   players: TransferPlayerResult[];
@@ -71,17 +78,20 @@ export type TransferSearchResult = {
 };
 
 export type TransferFilterOptions = {
-  leagues: Array<{ id: string; name: string; imageUrl: string | null }>;
+  leagues: Array<{ id: string; name: string; imageUrl: string | null; eaId: string | null }>;
   nationalities: Array<{ id: string; name: string; flagUrl: string | null }>;
 };
 
 export async function getTransferFilterOptions(): Promise<TransferFilterOptions> {
   if (!prisma) return { leagues: [], nationalities: [] };
   const [leagues, nationalities] = await Promise.all([
-    prisma.league.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true, imageUrl: true }, take: 250 }),
+    prisma.league.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true, imageUrl: true, eaId: true }, take: 250 }),
     prisma.country.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true, flagUrl: true }, take: 250 })
   ]);
-  return { leagues, nationalities };
+  return {
+    leagues: leagues.map((l) => ({ ...l, imageUrl: getLeagueIconUrl(l) })),
+    nationalities
+  };
 }
 
 function boundedInteger(value: number | undefined, fallback: number, min: number, max: number) {
@@ -115,6 +125,7 @@ export function parseTransferSearchParams(searchParams: URLSearchParams): Transf
     nationalityId: searchParams.get("nationalityId")?.trim() || undefined,
     nationalityName: searchParams.get("nationalityName")?.trim() || undefined,
     gender: searchParams.get("gender") === "FEMALE" ? "FEMALE" : searchParams.get("gender") === "ALL" ? "ALL" : "MALE",
+    freeAgents: searchParams.get("freeAgents") === "1" || searchParams.get("freeAgents") === "true",
     page: number("page"),
     pageSize: number("pageSize")
   };
@@ -146,11 +157,12 @@ function demoResults(params: TransferSearchParams): TransferPlayerResult[] {
       const maxOverall = params.maxOverall === undefined || player.overall <= params.maxOverall;
       const requestedPosition = params.position === undefined ? undefined : String(params.position).toLowerCase();
       const position = !requestedPosition || player.position.toLowerCase() === requestedPosition;
+      const freeAgent = !params.freeAgents || player.currentTeam?.eaId === "FREE_AGENTS";
       const team = !params.teamId || player.currentTeam?.id === params.teamId;
       const league = !params.leagueId || player.currentTeam?.league?.id === params.leagueId;
       const nationality = !params.nationalityId || player.nationality?.id === params.nationalityId;
       const stats = statFilters.every(([stat, filter]) => params[filter] === undefined || player[stat] >= params[filter]!);
-      return textMatches && minOverall && maxOverall && position && team && league && nationality && stats;
+      return textMatches && minOverall && maxOverall && position && freeAgent && team && league && nationality && stats;
     })
     .map((player) => ({
       id: player.id,
@@ -219,10 +231,11 @@ type SearchPlayer = Player & {
     role: "CLAVE" | "IMPORTANTE" | "ROTACION";
     team: {
       id: string;
+      eaId: string | null;
       name: string;
       shortName: string;
       imageUrl: string | null;
-      league: { id: string; name: string; imageUrl: string | null } | null;
+      league: { id: string; name: string; imageUrl: string | null; eaId: string | null } | null;
     };
   }>;
   nationality: { id: string; name: string; code: string | null; flagUrl: string | null } | null;
@@ -282,10 +295,18 @@ function serializePlayer(player: SearchPlayer): TransferPlayerResult {
     currentTeam: currentTeam
       ? {
           id: currentTeam.id,
+          eaId: currentTeam.eaId,
           name: currentTeam.name,
           shortName: currentTeam.shortName,
           imageUrl: currentTeam.imageUrl,
           league: currentTeam.league
+            ? {
+                id: currentTeam.league.id,
+                name: currentTeam.league.name,
+                imageUrl: getLeagueIconUrl(currentTeam.league),
+                eaId: currentTeam.league.eaId
+              }
+            : null
         }
       : null,
     nationality: player.nationality
@@ -296,10 +317,6 @@ function isDatabaseUnavailable(error: unknown): boolean {
   if (!error || typeof error !== "object" || !("code" in error)) return false;
   const code = (error as { code?: unknown }).code;
   return code === "P1001" || code === "P1003" || code === "P1017" || code === "P2021" || code === "P2022";
-}
-
-function hydrationErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "EA player hydration failed.";
 }
 
 function filterSerializedPlayers(
@@ -335,66 +352,10 @@ function filterSerializedPlayers(
         (!params.nationalityName || Boolean(player.nationality && normalizeSearchText(player.nationality.name).includes(normalizeSearchText(params.nationalityName))));
       const priceMatches = params.maxPrice === undefined || player.price <= params.maxPrice;
       const genderMatches = !params.gender || params.gender === "ALL" || player.gender === params.gender;
+      const freeAgentMatches = !params.freeAgents || player.currentTeam?.eaId === "FREE_AGENTS";
       return textMatches && positionMatches && minOverall && maxOverall && statsMatch &&
-        teamMatches && leagueMatches && nationalityMatches && priceMatches && genderMatches;
+        teamMatches && leagueMatches && nationalityMatches && priceMatches && genderMatches && freeAgentMatches;
     });
-}
-
-async function hydratePlayers(records: readonly EaRatingRecord[]) {
-  if (!prisma) throw new Error("Player database is unavailable.");
-  await upsertEaRecords(prisma, records);
-}
-
-function matchesEaRecord(record: EaRatingRecord, params: ReturnType<typeof normalizeParams>) {
-  const textMatches = !params.name || normalizeSearchText(record.name).includes(normalizeSearchText(params.name));
-  const requestedPosition = params.position?.toLowerCase();
-  const positionMatches = !params.position ||
-    normalizeSearchText(record.position) === normalizeSearchText(requestedPosition ?? "") ||
-    record.positionId?.toLowerCase() === requestedPosition;
-  const minOverall = params.minOverall === undefined || record.overall >= params.minOverall;
-  const maxOverall = params.maxOverall === undefined || record.overall <= params.maxOverall;
-  const statFilters = [
-    ["pace", params.minPace],
-    ["shooting", params.minShooting],
-    ["passing", params.minPassing],
-    ["dribbling", params.minDribbling],
-    ["defending", params.minDefending],
-    ["physical", params.minPhysical]
-  ] as const;
-  const statsMatch = statFilters.every(([stat, minimum]) => minimum === undefined || record[stat] >= minimum);
-  const teamMatches = !params.teamId || record.team?.id === params.teamId;
-  const leagueMatches = !params.leagueId || record.league?.id === params.leagueId;
-  const nationalityMatches = !params.nationalityId || record.nationality?.id === params.nationalityId;
-  return textMatches && positionMatches && minOverall && maxOverall && statsMatch &&
-    teamMatches && leagueMatches && nationalityMatches;
-}
-
-async function fetchEaCatalog(params: ReturnType<typeof normalizeParams>): Promise<readonly EaRatingRecord[]> {
-  const records: EaRatingRecord[] = [];
-  const pageSize = 100;
-  const seenEaIds = new Set<number>();
-  const eaPosition = params.position && /^\d+$/.test(params.position)
-    ? params.position
-    : params.position?.toUpperCase() === "FWD" || params.position?.toUpperCase() === "DC"
-      ? "25"
-      : undefined;
-  for (let page = 1; page <= 5; page += 1) {
-    const pageRecords = await fetchEaRatings({
-      locale: "es",
-      name: params.name,
-      position: eaPosition,
-      page,
-      limit: pageSize
-    });
-    for (const record of pageRecords) {
-      if (!seenEaIds.has(record.eaId) && matchesEaRecord(record, params)) {
-        seenEaIds.add(record.eaId);
-        records.push(record);
-      }
-    }
-    if (pageRecords.length < pageSize) break;
-  }
-  return records;
 }
 
 export async function getTransferSearchResults(input: TransferSearchParams = {}): Promise<TransferSearchResult> {
@@ -443,7 +404,14 @@ export async function getTransferSearchResults(input: TransferSearchParams = {})
         ...(params.nationalityName ? { normalizedName: { contains: normalizeSearchText(params.nationalityName) } } : {})
       };
     }
-    if (params.teamId || params.teamName || params.leagueId || params.leagueName) {
+    if (params.freeAgents) {
+      where.rosters = {
+        some: {
+          isActive: true,
+          team: { eaId: "FREE_AGENTS" }
+        }
+      };
+    } else if (params.teamId || params.teamName || params.leagueId || params.leagueName) {
       where.rosters = {
         some: {
           isActive: true,
@@ -476,7 +444,9 @@ export async function getTransferSearchResults(input: TransferSearchParams = {})
           select: {
             seasonId: true,
             role: true,
-            team: { include: { league: true } }
+            team: {
+              include: { league: { select: { id: true, eaId: true, name: true, imageUrl: true } } }
+            }
           }
         },
         matchStats: { select: { rating: true } }
@@ -484,18 +454,6 @@ export async function getTransferSearchResults(input: TransferSearchParams = {})
     });
     let players = await queryPlayers();
     let filtered = filterSerializedPlayers(players, params);
-    let hydrationError: string | undefined;
-    if (!filtered.length) {
-      try {
-        const records = await fetchEaCatalog(params);
-        await hydratePlayers(records);
-      } catch (error) {
-        if (isDatabaseUnavailable(error)) throw error;
-        hydrationError = hydrationErrorMessage(error);
-      }
-      players = await queryPlayers();
-      filtered = filterSerializedPlayers(players, params);
-    }
 
     const start = (params.page - 1) * params.pageSize;
     return {
@@ -505,7 +463,6 @@ export async function getTransferSearchResults(input: TransferSearchParams = {})
       total: filtered.length,
       totalPages: Math.max(1, Math.ceil(filtered.length / params.pageSize)),
       source: "database",
-      ...(hydrationError ? { hydrationError } : {})
     };
   } catch (error) {
     if (!isDatabaseUnavailable(error)) throw error;

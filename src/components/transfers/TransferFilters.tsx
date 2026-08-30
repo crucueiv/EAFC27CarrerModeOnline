@@ -40,6 +40,10 @@ export default function TransferFilters({ values, options }: { values: FilterVal
         <label className="text-sm font-medium">Equipo<input name="teamName" defaultValue={values.teamName} placeholder="Nombre del equipo" className="mt-1 w-full rounded-lg border p-2 font-normal" /></label>
         <label className="text-sm font-medium">Nacionalidad<select name="nationalityName" defaultValue={values.nationalityName ?? ""} className="mt-1 w-full rounded-lg border p-2 font-normal"><option value="">Todas las nacionalidades</option>{options.nationalities.map((country) => <option key={country.id} value={country.name}>{country.name}</option>)}</select></label>
         <label className="text-sm font-medium">Precio máximo (€)<input name="maxPrice" type="number" min="0" step="100000" defaultValue={values.maxPrice} className="mt-1 w-full rounded-lg border p-2 font-normal" /></label>
+        <label className="text-sm font-medium flex items-center gap-2 self-end pb-2">
+          <input type="checkbox" name="freeAgents" value="1" defaultChecked={Boolean(values.freeAgents)} className="h-4 w-4 rounded border-slate-300" />
+          Solo agentes libres
+        </label>
         <div className="md:col-span-2">
           <div className="flex justify-between text-sm font-medium"><span>Rango de media</span><span>{minOverall}–{maxOverall}</span></div>
           <div className="mt-2 grid grid-cols-2 gap-3">

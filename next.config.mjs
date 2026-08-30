@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   experimental: {
-    typedRoutes: true
+    typedRoutes: false
   },
   images: {
     remotePatterns: [
@@ -28,6 +28,11 @@ const nextConfig = {
       {
         protocol: "https",
         hostname: "v3.football.api-sports.io",
+        pathname: "/**"
+      },
+      {
+        protocol: "https",
+        hostname: "res.cloudinary.com",
         pathname: "/**"
       }
     ]

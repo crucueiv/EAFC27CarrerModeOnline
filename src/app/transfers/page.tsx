@@ -32,6 +32,7 @@ export default async function TransfersPage({ searchParams }: { searchParams: Se
     minDefending: number(first(searchParams.minDefending)),
     minPhysical: number(first(searchParams.minPhysical)),
     maxPrice: number(first(searchParams.maxPrice)),
+    freeAgents: first(searchParams.freeAgents) === "1" || first(searchParams.freeAgents) === "true",
     page: number(first(searchParams.page)),
     pageSize: number(first(searchParams.pageSize))
   };

@@ -1,6 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 import { fetchEaRatings, type EaRatingRecord } from "@/lib/ratings/eaClient";
 import { normalizeSearchText } from "@/lib/search/normalize";
+import { getContinent } from "@/lib/constants/continents";
 
 const PAGE_SIZE = 100;
 const DEFAULT_MAX_PLAYERS = 1_000_000;
@@ -42,6 +43,7 @@ export async function upsertEaRecords(database: PrismaClient, records: readonly 
             name: record.league.name,
             normalizedName: normalizeSearchText(record.league.name),
             country: "Internacional",
+            continent: "Europe",
             imageUrl: record.league.imageUrl
           }
         });

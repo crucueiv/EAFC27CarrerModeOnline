@@ -1,19 +1,36 @@
 import { loadLocalEnvironment } from "../src/lib/config/env";
 loadLocalEnvironment();
-import { PrismaClient } from "@prisma/client";
-import { importEaCatalog } from "../src/lib/catalog/importEaCatalog";
+import { execSync } from "child_process";
 
-const prisma = new PrismaClient();
-
-async function main() {
-  const maxPlayers = Number(process.env.EA_IMPORT_MAX_PLAYERS ?? "1000000");
-  const totals = await importEaCatalog(prisma, Number.isFinite(maxPlayers) ? maxPlayers : 1_000_000);
-  console.log(JSON.stringify(totals));
+async function runScript(name: string, script: string) {
+  console.log(`\n${"=".repeat(60)}`);
+  console.log(`🚀 Running: ${name}`);
+  console.log(`${"=".repeat(60)}`);
+  try {
+    execSync(`npx tsx ${script}`, { stdio: "inherit", cwd: process.cwd() });
+    console.log(`\n✅ ${name} completed successfully`);
+  } catch (error) {
+    console.error(`\n❌ ${name} failed:`, error);
+    process.exit(1);
+  }
 }
 
-main()
-  .catch((error) => {
-    console.error(error);
-    process.exitCode = 1;
-  })
-  .finally(() => prisma.$disconnect());
+async function main() {
+  console.log("🌱 Starting FC 27 Database Migration");
+  console.log("This will RESET the entire database and import fresh data from EA & easysbc.io");
+
+  await runScript("Database Cleanup", "scripts/cleanup-database.ts");
+  await runScript("Import Countries & NationalTeams", "scripts/import-countries.ts");
+  await runScript("Import Leagues & Teams", "scripts/import-leagues-teams.ts");
+  await runScript("Import CONMEBOL Tournaments", "scripts/import-tournaments.ts");
+  await runScript("Import Players", "scripts/import-players.ts");
+
+  console.log("\n" + "=".repeat(60));
+  console.log("🎉 MIGRATION COMPLETE!");
+  console.log("=".repeat(60));
+}
+
+main().catch((error) => {
+  console.error("Migration failed:", error);
+  process.exit(1);
+});

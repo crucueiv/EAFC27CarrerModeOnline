@@ -114,11 +114,18 @@ export default function PlayerCardRow({ player }: { player: TransferPlayerResult
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-slate-500">
             {player.currentTeam ? (
-              <span className="flex items-center gap-1.5">
-                {player.currentTeam.imageUrl ? <img src={player.currentTeam.imageUrl} alt="" className="h-5 w-5 object-contain" /> : <span className="grid h-5 w-5 place-items-center rounded-full bg-slate-200 text-[9px] font-bold">{player.currentTeam.shortName.slice(0, 2)}</span>}
-                {player.currentTeam.name}
-                {player.currentTeam.league && <span className="ml-1 flex items-center gap-1"><span>·</span>{player.currentTeam.league.imageUrl && <img src={player.currentTeam.league.imageUrl} alt="" className="h-4 w-4 object-contain" />}{player.currentTeam.league.name}</span>}
-              </span>
+              player.currentTeam.eaId === "FREE_AGENTS" ? (
+                <span className="flex items-center gap-1.5 font-medium text-amber-700">
+                  <img src="https://www.fifacm.com/content/media/imgs/fifa21/teams/256/l111592.png" alt="" className="h-5 w-5 object-contain" />
+                  Agente libre
+                </span>
+              ) : (
+                <span className="flex items-center gap-1.5">
+                  {player.currentTeam.imageUrl ? <img src={player.currentTeam.imageUrl} alt="" className="h-5 w-5 object-contain" /> : <span className="grid h-5 w-5 place-items-center rounded-full bg-slate-200 text-[9px] font-bold">{player.currentTeam.shortName.slice(0, 2)}</span>}
+                  {player.currentTeam.name}
+                  {player.currentTeam.league && <span className="ml-1 flex items-center gap-1"><span>·</span>{player.currentTeam.league.imageUrl && <img src={player.currentTeam.league.imageUrl} alt="" className="h-4 w-4 object-contain" />}{player.currentTeam.league.name}</span>}
+                </span>
+              )
             ) : <span>Agente libre</span>}
             <span>Rol: {player.role === "CLAVE" ? "Clave" : player.role === "IMPORTANTE" ? "Importante" : "Rotación"}</span>
             {player.nationality && <span className="flex items-center gap-1.5">{player.nationality.flagUrl ? <img src={player.nationality.flagUrl} alt="" className="h-4 w-6 object-cover" /> : <span>{player.nationality.code === "US" ? "🇺🇸" : player.nationality.code === "GB" ? "🇬🇧" : player.nationality.code === "DE" ? "🇩🇪" : "🌐"}</span>}{player.nationality.name}</span>}

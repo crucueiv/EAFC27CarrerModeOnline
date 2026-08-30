@@ -63,15 +63,59 @@ enum TournamentStageType {
 
 model User {
   id                String              @id @default(cuid())
+  name              String?
   email             String              @unique
-  displayName       String
+  emailVerified     DateTime?
+  image             String?
+  googleId          String?             @unique
+  username          String?             @unique
+  avatarUrl         String?
   createdAt         DateTime            @default(now())
   updatedAt         DateTime            @updatedAt
   memberships       CareerGroupMember[]
   managedTeams      Team[]              @relation("TeamManager")
   transfersFrom     Transfer[]          @relation("TransferSeller")
   transfersTo       Transfer[]          @relation("TransferBuyer")
-  rosterAssignments  Roster[]            @relation("RosterOwner")
+  rosterAssignments Roster[]            @relation("RosterOwner")
+  clubTeamId        String?             @unique
+  clubTeam          Team?               @relation("UserClubTeam", fields: [clubTeamId], references: [id])
+  nationalTeamId    String?             @unique
+  nationalTeam      NationalTeam?       @relation("UserNationalTeam", fields: [nationalTeamId], references: [id])
+  emails            EmailMessage[]
+  accounts          Account[]
+  sessions          Session[]
+}
+
+model Account {
+  id                String              @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+  @@unique([identifier, token])
 }
 
 model CareerGroup {
@@ -97,17 +141,39 @@ model CareerGroupMember {
 
 model League {
   id            String       @id @default(cuid())
-  eaId          String?       @unique
+  eaId          String?      @unique
   name          String
-  normalizedName String @default("")
+  normalizedName String      @default("")
   country       String
+  continent     String
   imageUrl      String?
   careerGroupId String?
-  careerGroup   CareerGroup?  @relation(fields: [careerGroupId], references: [id], onDelete: Cascade)
+  careerGroup   CareerGroup? @relation(fields: [careerGroupId], references: [id], onDelete: Cascade)
   teams         Team[]
   seasons       Season[]
   createdAt     DateTime     @default(now())
   @@index([normalizedName])
+  @@index([continent, country])
+}
+
+model NationalTeam {
+  id            String   @id @default(cuid())
+  eaId          String?  @unique
+  name          String
+  normalizedName String  @default("")
+  shortName     String
+  imageUrl      String?
+  country       String
+  countryCode   String?  @unique
+  flagUrl       String?
+  userManagerId String?  @unique
+  userManager   User?    @relation("UserNationalTeam")
+  managerId     String?  @unique
+  manager       Manager? @relation("ManagerNationalTeam")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  @@index([normalizedName])
+  @@index([countryCode])
 }
 
 model Team {
@@ -115,7 +181,7 @@ model Team {
   eaId             String?      @unique
   apiSportsId      Int?         @unique
   name             String
-  normalizedName   String @default("")
+  normalizedName   String       @default("")
   shortName        String
   imageUrl         String?
   budget           Int          @default(50000000)
@@ -124,6 +190,7 @@ model Team {
   league           League?      @relation(fields: [leagueId], references: [id])
   manager          User?        @relation("TeamManager", fields: [managerId], references: [id])
   managerProfile   Manager?     @relation("TeamRealManager")
+  userClub         User?        @relation("UserClubTeam")
   rosters          Roster[]
   homeMatches      Match[]      @relation("HomeTeam")
   awayMatches      Match[]      @relation("AwayTeam")
@@ -135,15 +202,19 @@ model Team {
 }
 
 model Manager {
-  id          String   @id @default(cuid())
-  apiSportsId Int?     @unique
-  name        String
-  nationality String?
-  avatarUrl   String?
-  teamId      String   @unique
-  team        Team     @relation("TeamRealManager", fields: [teamId], references: [id], onDelete: Cascade)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id            String   @id @default(cuid())
+  apiSportsId   Int?     @unique
+  name          String
+  nationality   String?
+  avatarUrl     String?
+  teamId        String?  @unique
+  team          Team?    @relation("TeamRealManager", fields: [teamId], references: [id])
+  nationalTeamId String? @unique
+  nationalTeam   NationalTeam? @relation("ManagerNationalTeam", fields: [nationalTeamId], references: [id])
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  @@index([teamId])
+  @@index([nationalTeamId])
 }
 
 model Country {
@@ -151,7 +222,7 @@ model Country {
   eaId     String?  @unique
   name     String
   normalizedName String @default("")
-  code     String?  @unique
+  code     String?
   flagUrl  String?
   players  Player[]
   @@index([name])
@@ -179,6 +250,9 @@ model Player {
   defending       Int               @default(0)
   physical        Int               @default(0)
   marketValue     Int               @default(1000000)
+  skillMoves      Int               @default(0)
+  weakFoot        Int               @default(0)
+  preferredFoot   String?           @default("RIGHT")
   nationalityId   String?
   nationality     Country?          @relation(fields: [nationalityId], references: [id])
   createdAt       DateTime          @default(now())
@@ -330,11 +404,11 @@ model RatingSnapshot {
 
 model Tournament {
   id        String             @id @default(cuid())
-  seasonId  String
+  seasonId  String?
   name      String
   stages    TournamentStage[]
   participants TournamentParticipant[]
-  season    Season             @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  season    Season?             @relation(fields: [seasonId], references: [id], onDelete: Cascade)
 }
 
 model TournamentStage {
@@ -367,4 +441,18 @@ model TournamentParticipant {
   tournament   Tournament  @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
   team         Team        @relation(fields: [teamId], references: [id], onDelete: Cascade)
   @@unique([tournamentId, teamId])
+}
+
+model EmailMessage {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  from      String
+  subject   String
+  body      String
+  read      Boolean  @default(false)
+  metadata  Json?
+  createdAt DateTime @default(now())
+  @@index([userId, read])
+  @@index([userId, createdAt])
 }

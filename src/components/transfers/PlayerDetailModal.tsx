@@ -4,7 +4,6 @@ import Image from "next/image";
 import { useEffect, useState } from "react";
 import type { TransferPlayerResult } from "@/lib/transfers/search";
 import type { PlayerScoutingData } from "@/lib/scouting/getPlayerScoutingData";
-import { addClauseBuyoutEmail } from "@/lib/inbox/inboxStore";
 import { ClubNegotiationModal } from "./ClubNegotiationModal";
 
 const statLabels = [
@@ -56,7 +55,8 @@ export default function PlayerDetailModal({
 
   const teamNameLower = (player.currentTeam?.name || "").toLowerCase();
   const teamShortUpper = (player.currentTeam?.shortName || "").toUpperCase();
-  const sellerTeamName = player.currentTeam?.name || "Club Propietario";
+  const isFreeAgent = player.currentTeam?.eaId === "FREE_AGENTS";
+  const sellerTeamName = isFreeAgent ? "Agente libre" : (player.currentTeam?.name || "Club Propietario");
   const isOwnPlayer = teamNameLower.includes("northbridge") || teamShortUpper === "NFC";
 
   useEffect(() => {
@@ -137,14 +137,6 @@ export default function PlayerDetailModal({
           setCurrentBudget(data.remainingBudget);
         }
 
-        addClauseBuyoutEmail({
-          id: player.id,
-          name: player.name,
-          avatarUrl: player.avatarUrl,
-          releaseClause: player.releaseClause,
-          currentTeamName: sellerTeamName
-        });
-
         setBuyoutResultMsg(
           `¡Cláusula abonada! Has pagado la cláusula de rescisión de ${formatPrice(
             player.releaseClause
@@ -165,23 +157,25 @@ export default function PlayerDetailModal({
   };
 
   const handleAgreementReached = async (agreedPrice: number) => {
-    // Si la oferta pactada supera el presupuesto del usuario, se ajusta al límite máximo disponible
     const finalPrice = Math.min(agreedPrice, currentBudget);
 
     try {
-      await fetch("/api/mailbox/messages", {
+      const res = await fetch("/api/transfers/complete", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          title: `Acuerdo Alcanzado: ${player.name}`,
-          content: `El club ${sellerTeamName} ha aceptado la oferta de ${finalPrice.toLocaleString("es-ES")} € por el traspaso de ${player.name}. Accede a la sección de contratos para formalizar el sueldo del jugador.`,
-          category: "TRANSFER_AGREEMENT",
           playerId: player.id,
+          sellerTeamId: player.currentTeam?.id,
           agreedPrice: finalPrice,
         }),
       });
+
+      const data = await res.json();
+      if (data.success && data.remainingBudget !== undefined) {
+        setCurrentBudget(data.remainingBudget);
+      }
     } catch (error) {
-      console.error("Error al registrar el acuerdo en la bandeja de entrada:", error);
+      console.error("Error al completar el traspaso:", error);
     }
   };
 
@@ -255,8 +249,10 @@ export default function PlayerDetailModal({
               <span className="text-slate-500">Cláusula {formatPrice(player.releaseClause)}</span>
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-slate-500">
-              <span className="flex items-center gap-1.5 font-medium">
-                {player.currentTeam?.imageUrl ? (
+              <span className={`flex items-center gap-1.5 font-medium ${isFreeAgent ? "text-amber-700" : ""}`}>
+                {isFreeAgent ? (
+                  <img src="https://www.fifacm.com/content/media/imgs/fifa21/teams/256/l111592.png" alt="" className="h-4 w-4 object-contain" />
+                ) : player.currentTeam?.imageUrl ? (
                   <img src={player.currentTeam.imageUrl} alt="" className="h-4 w-4 object-contain" />
                 ) : null}
                 {sellerTeamName}
