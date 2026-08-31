@@ -28,6 +28,7 @@ type ApiSportsCoachResponse = {
     photo?: string;
     career?: Array<{
       team?: { id: number };
+      start?: string;
       end?: string | null;
     }>;
   }>;
@@ -35,28 +36,96 @@ type ApiSportsCoachResponse = {
 
 const FETCH_TIMEOUT_MS = 5000;
 
+const GENERIC_AVATAR_URL =
+  "https://res.cloudinary.com/oiugg8m6/image/upload/v1788133891/qvbsomljzzcmickbhyad.png";
+
+const FIRST_NAMES = [
+  "Carlos", "Javier", "Miguel", "Antonio", "Fernando", "Roberto", "Alberto", "Pablo",
+  "Luis", "Manuel", "Francisco", "Pedro", "Juan", "José", "David", "Alejandro",
+  "Diego", "Sergio", "Andrés", "Marcos", "Vicente", "Ricardo", "Eduardo", "Raúl",
+  "Enrique", "Gabriel", "Rafael", "Tomás", "Adrián", "Héctor"
+];
+
+const LAST_NAMES = [
+  "García", "Rodríguez", "Martínez", "López", "González", "Sánchez", "Pérez", "Gómez",
+  "Fernández", "Torres", "Ruiz", "Ramírez", "Moreno", "Jiménez", "Morales", "Castillo",
+  "Ortiz", "Vargas", "Flores", "Gutiérrez", "Reyes", "Cruz", "Herrera", "Medina",
+  "Aguilar", "Vega", "Castro", "Romero", "Soler", "Molina"
+];
+
 function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number): Promise<Response> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timeoutId));
 }
 
-function makeFallback(teamId: string, teamName?: string): ManagerResult {
-  return {
-    id: `fallback-${teamId}`,
-    name: teamName ? `Entrenador de ${teamName}` : "Director Técnico",
-    nationality: null,
-    avatarUrl: null,
-    apiSportsId: null,
-    teamId,
-  };
+function generateDeterministicName(seed: string): string {
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) {
+    hash = ((hash << 5) - hash + seed.charCodeAt(i)) | 0;
+  }
+  const absHash = Math.abs(hash);
+  const firstName = FIRST_NAMES[absHash % FIRST_NAMES.length];
+  const lastName = LAST_NAMES[(absHash >> 8) % LAST_NAMES.length];
+  return `${firstName} ${lastName}`;
+}
+
+async function saveFallbackManager(teamId: string, teamName?: string): Promise<ManagerResult> {
+  const name = teamName ? generateDeterministicName(teamId) : "Director Técnico";
+
+  if (!prisma) {
+    return {
+      id: `fallback-${teamId}`,
+      name,
+      nationality: null,
+      avatarUrl: GENERIC_AVATAR_URL,
+      apiSportsId: null,
+      teamId,
+    };
+  }
+
+  try {
+    const saved = await prisma.manager.upsert({
+      where: { teamId },
+      update: {
+        name,
+        avatarUrl: GENERIC_AVATAR_URL,
+        apiSportsId: null,
+      },
+      create: {
+        teamId,
+        name,
+        avatarUrl: GENERIC_AVATAR_URL,
+        apiSportsId: null,
+      },
+    });
+    console.log(`[getOrFetchManager] ✅ fallback manager saved: ${saved.name} (id=${saved.id})`);
+    return {
+      id: saved.id,
+      name: saved.name,
+      nationality: null,
+      avatarUrl: saved.avatarUrl,
+      apiSportsId: null,
+      teamId,
+    };
+  } catch (err) {
+    console.error("[getOrFetchManager] failed to save fallback manager:", err);
+    return {
+      id: `fallback-${teamId}`,
+      name,
+      nationality: null,
+      avatarUrl: GENERIC_AVATAR_URL,
+      apiSportsId: null,
+      teamId,
+    };
+  }
 }
 
 export async function getOrFetchManager(teamId: string): Promise<ManagerResult> {
   console.log(`[getOrFetchManager] ▶ start teamId="${teamId}"`);
   if (!prisma) {
     console.warn("[getOrFetchManager] ⚠️ prisma unavailable, returning fallback");
-    return makeFallback(teamId);
+    return saveFallbackManager(teamId);
   }
 
   try {
@@ -70,7 +139,7 @@ export async function getOrFetchManager(teamId: string): Promise<ManagerResult> 
 
     if (!team) {
       console.warn(`[getOrFetchManager] ⚠️ team "${teamId}" not found in DB`);
-      return makeFallback(teamId);
+      return saveFallbackManager(teamId);
     }
     console.log(`[getOrFetchManager] team found: name="${team.name}", apiSportsId=${team.apiSportsId}, managerProfile=${team.managerProfile ? `{name: "${team.managerProfile.name}", apiSportsId: ${team.managerProfile.apiSportsId}}` : "null"}`);
 
@@ -88,10 +157,22 @@ export async function getOrFetchManager(teamId: string): Promise<ManagerResult> 
       };
     }
 
+    if (team.managerProfile && !team.managerProfile.apiSportsId) {
+      console.log(`[getOrFetchManager] ✓ returning cached fallback manager: ${team.managerProfile.name}`);
+      return {
+        id: team.managerProfile.id,
+        name: team.managerProfile.name,
+        nationality: team.managerProfile.nationality,
+        avatarUrl: team.managerProfile.avatarUrl,
+        apiSportsId: null,
+        teamId: internalTeamId,
+      };
+    }
+
     const apiKey = process.env.API_SPORTS_KEY;
     if (!apiKey) {
       console.warn(`[getOrFetchManager] ⚠️ API_SPORTS_KEY not defined in .env`);
-      return makeFallback(internalTeamId, team.name);
+      return saveFallbackManager(internalTeamId, team.name);
     }
 
     let apiSportsTeamId = team.apiSportsId;
@@ -147,10 +228,14 @@ export async function getOrFetchManager(teamId: string): Promise<ManagerResult> 
         if (coachRes.ok) {
           const coachData = (await coachRes.json()) as ApiSportsCoachResponse;
           if (coachData.response && coachData.response.length > 0) {
-            const coach =
-              coachData.response.find(
-                (c) => c.career && c.career.some((car) => car.team?.id === apiSportsTeamId && !car.end)
-              ) || coachData.response[0];
+            const activeCoaches = coachData.response
+              .filter((c) => c.career?.some((car) => car.team?.id === apiSportsTeamId && !car.end))
+              .sort((a, b) => {
+                const aStart = a.career?.find((car) => car.team?.id === apiSportsTeamId && !car.end)?.start ?? "";
+                const bStart = b.career?.find((car) => car.team?.id === apiSportsTeamId && !car.end)?.start ?? "";
+                return bStart.localeCompare(aStart);
+              });
+            const coach = activeCoaches[0] || coachData.response[0];
 
             const coachName =
               coach.name || `${coach.firstname || ""} ${coach.lastname || ""}`.trim() || `Entrenador de ${team.name}`;
@@ -197,10 +282,10 @@ export async function getOrFetchManager(teamId: string): Promise<ManagerResult> 
       }
     }
 
-    console.log(`[getOrFetchManager] ⚠️ no real manager found, returning fallback for ${team.name}`);
-    return makeFallback(internalTeamId, team.name);
+    console.log(`[getOrFetchManager] ⚠️ no real manager found, saving fallback for ${team.name}`);
+    return saveFallbackManager(internalTeamId, team.name);
   } catch (error) {
     console.error(`[getOrFetchManager] ❌ unexpected error:`, error);
-    return makeFallback(teamId);
+    return saveFallbackManager(teamId);
   }
 }

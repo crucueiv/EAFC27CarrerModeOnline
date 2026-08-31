@@ -38,11 +38,16 @@ export async function POST(req: Request) {
 
       await tx.manager.upsert({
         where: { teamId },
-        update: { name: user.username || user.email || "Manager", apiSportsId: null },
+        update: {
+          name: user.username || user.email || "Manager",
+          apiSportsId: null,
+          avatarUrl: user.avatarUrl || null,
+        },
         create: {
           teamId,
           name: user.username || user.email || "Manager",
           apiSportsId: null,
+          avatarUrl: user.avatarUrl || null,
         },
       });
 

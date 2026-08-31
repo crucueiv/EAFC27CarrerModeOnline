@@ -25,7 +25,6 @@ export default function TransferFilters({ values, options }: { values: FilterVal
     <form onSubmit={(event) => { event.preventDefault(); submit(new FormData(event.currentTarget)); }} className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <label className="text-sm font-medium">Nombre<input name="name" defaultValue={values.name} placeholder="Buscar jugadores" className="mt-1 w-full rounded-lg border p-2 font-normal" /></label>
-        <label className="text-sm font-medium">Género<select name="gender" defaultValue={values.gender ?? "MALE"} className="mt-1 w-full rounded-lg border p-2 font-normal"><option value="MALE">Masculino</option><option value="FEMALE">Femenino</option><option value="ALL">Todos</option></select></label>
         <fieldset className="md:col-span-2 lg:col-span-4">
           <legend className="text-sm font-medium">Posición</legend>
           <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">

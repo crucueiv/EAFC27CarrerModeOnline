@@ -6,6 +6,9 @@ import { getContinent } from "@/lib/constants/continents";
 const PAGE_SIZE = 100;
 const DEFAULT_MAX_PLAYERS = 1_000_000;
 
+const TEAM_API_SPORTS_URL =
+  "https://res.cloudinary.com/oiugg8m6/raw/upload/v1788132605/dkrnnw4djtjuld0qe05u.json";
+
 function shortName(name: string): string {
   const compact = name.replace(/[^A-Za-zÀ-ÿ0-9 ]/g, "").trim();
   return compact.slice(0, 5).toUpperCase() || "TEAM";
@@ -19,7 +22,38 @@ function reputationFromOverall(overall: number): number {
   return 1;
 }
 
-export async function upsertEaRecords(database: PrismaClient, records: readonly EaRatingRecord[]) {
+type CloudinaryTeam = {
+  eaId: string;
+  apiSportsId: number;
+};
+
+export async function fetchTeamApiSportsMap(): Promise<Map<string, number>> {
+  try {
+    const res = await fetch(TEAM_API_SPORTS_URL, { cache: "no-store" });
+    if (!res.ok) {
+      console.warn(`[fetchTeamApiSportsMap] failed to fetch Cloudinary JSON: HTTP ${res.status}`);
+      return new Map();
+    }
+    const data = (await res.json()) as CloudinaryTeam[];
+    const map = new Map<string, number>();
+    for (const entry of data) {
+      if (entry.eaId && entry.apiSportsId) {
+        map.set(String(entry.eaId), entry.apiSportsId);
+      }
+    }
+    console.log(`[fetchTeamApiSportsMap] loaded ${map.size} team apiSportsId mappings`);
+    return map;
+  } catch (err) {
+    console.warn("[fetchTeamApiSportsMap] error fetching Cloudinary JSON:", err);
+    return new Map();
+  }
+}
+
+export async function upsertEaRecords(
+  database: PrismaClient,
+  records: readonly EaRatingRecord[],
+  apiSportsMap?: Map<string, number>
+) {
   return database.$transaction(async (transaction) => {
     let players = 0;
     let teams = 0;
@@ -73,6 +107,7 @@ export async function upsertEaRecords(database: PrismaClient, records: readonly 
 
       let teamId: string | undefined;
       if (record.team) {
+        const cloudinaryApiSportsId = apiSportsMap?.get(record.team.id);
         const team = await transaction.team.upsert({
           where: { eaId: record.team.id },
           update: {
@@ -80,7 +115,8 @@ export async function upsertEaRecords(database: PrismaClient, records: readonly 
             normalizedName: normalizeSearchText(record.team.name),
             shortName: shortName(record.team.name),
             imageUrl: record.team.imageUrl,
-            ...(leagueId ? { leagueId } : {})
+            ...(leagueId ? { leagueId } : {}),
+            ...(cloudinaryApiSportsId ? { apiSportsId: cloudinaryApiSportsId } : {})
           },
           create: {
             eaId: record.team.id,
@@ -88,7 +124,8 @@ export async function upsertEaRecords(database: PrismaClient, records: readonly 
             normalizedName: normalizeSearchText(record.team.name),
             shortName: shortName(record.team.name),
             imageUrl: record.team.imageUrl,
-            leagueId
+            leagueId,
+            ...(cloudinaryApiSportsId ? { apiSportsId: cloudinaryApiSportsId } : {})
           }
         });
         teamId = team.id;
@@ -170,6 +207,8 @@ export async function importEaCatalog(
   const seen = new Set<number>();
   const totals = { players: 0, teams: 0, leagues: 0, countries: 0, rosters: 0 };
 
+  const apiSportsMap = await fetchTeamApiSportsMap();
+
   for (let offset = 0; seen.size < target; offset += PAGE_SIZE) {
     const records = await fetchEaRatings({
       locale: "es",
@@ -181,7 +220,7 @@ export async function importEaCatalog(
     const uniqueRecords = records.filter((record) => !seen.has(record.eaId)).slice(0, target - seen.size);
     if (!uniqueRecords.length) break;
     uniqueRecords.forEach((record) => seen.add(record.eaId));
-    const imported = await upsertEaRecords(database, uniqueRecords);
+    const imported = await upsertEaRecords(database, uniqueRecords, apiSportsMap);
     totals.players += imported.players;
     totals.teams += imported.teams;
     totals.leagues += imported.leagues;

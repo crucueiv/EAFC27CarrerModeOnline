@@ -24,7 +24,6 @@ export type TransferSearchParams = {
   teamName?: string;
   nationalityId?: string;
   nationalityName?: string;
-  gender?: "MALE" | "FEMALE" | "ALL";
   freeAgents?: boolean;
   page?: number;
   pageSize?: number;
@@ -46,7 +45,6 @@ export type TransferPlayerResult = {
     performanceAverage: number | null;
   };
   role: string;
-  gender: "MALE" | "FEMALE";
   stats: Record<"pace" | "shooting" | "passing" | "dribbling" | "defending" | "physical", number>;
   currentTeam: {
     id: string;
@@ -124,7 +122,6 @@ export function parseTransferSearchParams(searchParams: URLSearchParams): Transf
     teamName: searchParams.get("teamName")?.trim() || undefined,
     nationalityId: searchParams.get("nationalityId")?.trim() || undefined,
     nationalityName: searchParams.get("nationalityName")?.trim() || undefined,
-    gender: searchParams.get("gender") === "FEMALE" ? "FEMALE" : searchParams.get("gender") === "ALL" ? "ALL" : "MALE",
     freeAgents: searchParams.get("freeAgents") === "1" || searchParams.get("freeAgents") === "true",
     page: number("page"),
     pageSize: number("pageSize")
@@ -210,7 +207,6 @@ function demoResults(params: TransferSearchParams): TransferPlayerResult[] {
       }).releaseClause,
       financialBreakdown: { performanceAverage: null },
       role: "ROTACION",
-      gender: "MALE" as const,
       stats: {
         pace: player.pace,
         shooting: player.shooting,
@@ -283,7 +279,6 @@ function serializePlayer(player: SearchPlayer): TransferPlayerResult {
     releaseClause: financial.releaseClause,
     financialBreakdown: { performanceAverage: financial.performanceAverage },
     role,
-    gender: player.gender,
     stats: {
       pace: player.pace,
       shooting: player.shooting,
@@ -351,10 +346,9 @@ function filterSerializedPlayers(
       const nationalityMatches = (!params.nationalityId || player.nationality?.id === params.nationalityId) &&
         (!params.nationalityName || Boolean(player.nationality && normalizeSearchText(player.nationality.name).includes(normalizeSearchText(params.nationalityName))));
       const priceMatches = params.maxPrice === undefined || player.price <= params.maxPrice;
-      const genderMatches = !params.gender || params.gender === "ALL" || player.gender === params.gender;
       const freeAgentMatches = !params.freeAgents || player.currentTeam?.eaId === "FREE_AGENTS";
       return textMatches && positionMatches && minOverall && maxOverall && statsMatch &&
-        teamMatches && leagueMatches && nationalityMatches && priceMatches && genderMatches && freeAgentMatches;
+        teamMatches && leagueMatches && nationalityMatches && priceMatches && freeAgentMatches;
     });
 }
 
@@ -378,7 +372,7 @@ export async function getTransferSearchResults(input: TransferSearchParams = {})
   try {
     const where: Prisma.PlayerWhereInput = {};
     if (params.name) where.normalizedName = { contains: normalizeSearchText(params.name) };
-    if (params.gender !== "ALL") where.gender = params.gender ?? "MALE";
+    where.gender = "MALE";
     if (params.minOverall !== undefined || params.maxOverall !== undefined) {
       where.overall = { gte: params.minOverall, lte: params.maxOverall };
     }

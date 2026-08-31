@@ -76,9 +76,11 @@ export default async function DashboardPage() {
               <h1 className="text-4xl font-bold">{user.clubTeam.name}</h1>
             </div>
             <div className="mt-3 flex items-center gap-2 text-emerald-50">
-              {user.clubTeam.league?.imageUrl && (
+              {user.clubTeam.league?.eaId ? (
+                <img src={`https://assets.easysbc.io/fc26/leagues/${user.clubTeam.league.eaId}.png`} alt="" className="h-5 w-5 rounded object-contain" />
+              ) : user.clubTeam.league?.imageUrl ? (
                 <img src={user.clubTeam.league.imageUrl} alt="" className="h-5 w-5 rounded object-contain" />
-              )}
+              ) : null}
               <span>{user.clubTeam.league?.name || "Liga desconocida"}</span>
               <span className="text-emerald-300">·</span>
               <span>Manager: {user.username}</span>
@@ -127,9 +129,9 @@ export default async function DashboardPage() {
                 const radius = 16;
                 const circumference = 2 * Math.PI * radius;
                 const dashOffset = circumference * (1 - o / 99);
-                const avatar = r.player.avatarUrl || (r.player as { eaId?: number }).eaId
+                const avatar = r.player.avatarUrl || ((r.player as { eaId?: number }).eaId
                   ? `https://ratings-images-prod.pulse.ea.com/FC25/full/player-portraits/p${(r.player as { eaId: number }).eaId}.png`
-                  : "/player-placeholder.svg";
+                  : "/player-placeholder.svg");
                 return (
                   <li key={r.id} className="flex items-center justify-between border-b border-slate-100 pb-2 last:border-0 last:pb-0">
                     <div className="flex items-center gap-3">

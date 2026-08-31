@@ -1,6 +1,8 @@
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
 
+const FEMALE_LEAGUE_KEYWORDS = ["Frauen", "Women", "Femení", "Femminile", "Féminin", "Dames"];
+
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const continent = searchParams.get("continent");
@@ -31,7 +33,13 @@ export async function GET(req: Request) {
     }
 
     const leagues = await prisma.league.findMany({
-      where: { continent, country },
+      where: {
+        continent,
+        country,
+        NOT: FEMALE_LEAGUE_KEYWORDS.map((kw) => ({
+          name: { contains: kw, mode: "insensitive" as const }
+        }))
+      },
       select: {
         id: true,
         name: true,

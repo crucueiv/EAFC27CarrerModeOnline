@@ -15,7 +15,6 @@ function number(value: string | undefined) {
 export default async function TransfersPage({ searchParams }: { searchParams: SearchParams }) {
   const params: TransferSearchParams = {
     name: first(searchParams.name),
-    gender: first(searchParams.gender) === "FEMALE" ? "FEMALE" : first(searchParams.gender) === "ALL" ? "ALL" : "MALE",
     position: first(searchParams.position),
     leagueId: first(searchParams.leagueId),
     leagueName: first(searchParams.leagueName),
