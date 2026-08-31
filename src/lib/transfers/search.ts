@@ -5,6 +5,7 @@ import {
   calculatePlayerValueAndClause
 } from "@/lib/transfers/pricingEngine";
 import { normalizeSearchText } from "@/lib/search/normalize";
+import { EA_POSITION_BY_ID } from "@/lib/ratings/positions";
 
 export type TransferSearchParams = {
   name?: string;
@@ -153,7 +154,11 @@ function demoResults(params: TransferSearchParams): TransferPlayerResult[] {
       const minOverall = params.minOverall === undefined || player.overall >= params.minOverall;
       const maxOverall = params.maxOverall === undefined || player.overall <= params.maxOverall;
       const requestedPosition = params.position === undefined ? undefined : String(params.position).toLowerCase();
-      const position = !requestedPosition || player.position.toLowerCase() === requestedPosition;
+      const numericPosId = requestedPosition !== undefined && /^\d+$/.test(requestedPosition);
+      const resolvedPosition = numericPosId && requestedPosition
+        ? (EA_POSITION_BY_ID.get(requestedPosition)?.shortLabel.toLowerCase() ?? requestedPosition)
+        : requestedPosition;
+      const position = !resolvedPosition || player.position.toLowerCase() === resolvedPosition;
       const freeAgent = !params.freeAgents || player.currentTeam?.eaId === "FREE_AGENTS";
       const team = !params.teamId || player.currentTeam?.id === params.teamId;
       const league = !params.leagueId || player.currentTeam?.league?.id === params.leagueId;
@@ -326,7 +331,9 @@ function filterSerializedPlayers(
       const numericPositionId = requestedPosition !== undefined && /^\d+$/.test(requestedPosition);
       const positionMatches = !params.position ||
         (numericPositionId
-          ? player.eaPositionId === requestedPosition
+          ? (EA_POSITION_BY_ID.get(requestedPosition!)
+              ? normalizeSearchText(player.position) === normalizeSearchText(EA_POSITION_BY_ID.get(requestedPosition!)!.shortLabel)
+              : normalizeSearchText(player.position) === normalizeSearchText(requestedPosition))
           : normalizeSearchText(player.position) === normalizeSearchText(requestedPosition ?? ""));
       const minOverall = params.minOverall === undefined || player.overall >= params.minOverall;
       const maxOverall = params.maxOverall === undefined || player.overall <= params.maxOverall;
@@ -387,10 +394,17 @@ export async function getTransferSearchResults(input: TransferSearchParams = {})
       if (value !== undefined) where[field] = { gte: value };
     }
     const numericPositionId = params.position !== undefined && /^\d+$/.test(params.position);
-    if (params.position && !numericPositionId) {
-      where.position = { equals: params.position, mode: "insensitive" };
-    } else if (numericPositionId) {
-      where.eaPositionId = params.position;
+    if (params.position) {
+      if (numericPositionId) {
+        const mapped = EA_POSITION_BY_ID.get(params.position);
+        if (mapped) {
+          where.position = { equals: mapped.shortLabel, mode: "insensitive" };
+        } else {
+          where.position = { equals: params.position, mode: "insensitive" };
+        }
+      } else {
+        where.position = { equals: params.position, mode: "insensitive" };
+      }
     }
     if (params.nationalityId || params.nationalityName) {
       where.nationality = {

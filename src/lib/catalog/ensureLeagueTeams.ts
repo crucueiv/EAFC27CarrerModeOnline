@@ -2,6 +2,7 @@ import type { PrismaClient } from "@prisma/client";
 import { fetchEaRatings } from "@/lib/ratings/eaClient";
 import { normalizeSearchText } from "@/lib/search/normalize";
 import { LEAGUE_TEAM_COUNTS } from "@/lib/constants/leagueTeamCounts";
+import { fetchTeamApiSportsMap } from "@/lib/catalog/importEaCatalog";
 
 function shortName(name: string): string {
   return name.replace(/[^A-Za-zÀ-ÿ0-9 ]/g, "").trim().slice(0, 5).toUpperCase() || "TEAM";
@@ -53,8 +54,11 @@ export async function ensureLeagueTeamsComplete(
     }
   }
 
+  const apiSportsMap = await fetchTeamApiSportsMap();
+
   let created = 0;
   for (const [eaId, teamData] of teamsMap) {
+    const apiSportsId = apiSportsMap.get(eaId);
     await database.team.create({
       data: {
         eaId,
@@ -63,6 +67,7 @@ export async function ensureLeagueTeamsComplete(
         shortName: shortName(teamData.name),
         imageUrl: teamData.imageUrl,
         leagueId,
+        ...(apiSportsId ? { apiSportsId } : {}),
       },
     });
     created++;

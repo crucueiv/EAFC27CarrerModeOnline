@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { normalizeSearchText } from "@/lib/search/normalize";
+import { fetchTeamApiSportsMap } from "@/lib/catalog/importEaCatalog";
 
 const prisma = new PrismaClient();
 
@@ -30,7 +31,10 @@ const CONMEBOL_TOURNAMENTS = {
 async function main() {
   console.log("🏆 Importing CONMEBOL Tournaments & Teams...");
   
-  const teamGroups = await fetchEATeamGroups();
+  const [teamGroups, apiSportsMap] = await Promise.all([
+    fetchEATeamGroups(),
+    fetchTeamApiSportsMap(),
+  ]);
   const conmebolGroups = teamGroups.filter(g => g.id in CONMEBOL_TOURNAMENTS);
   
   // Step 1: Collect ALL unique CONMEBOL teams (deduplicate by EA ID)
@@ -54,6 +58,7 @@ async function main() {
   // Step 2: Create unique teams (leagueId: null, not playable)
   let teamsCreated = 0;
   for (const [eaId, teamData] of allConmebolTeams) {
+    const teamApiSportsId = apiSportsMap.get(eaId);
     await prisma.team.upsert({
       where: { eaId },
       update: {
@@ -62,6 +67,7 @@ async function main() {
         shortName: shortName(teamData.name),
         imageUrl: teamData.imageUrl,
         leagueId: null, // No league for CONMEBOL teams
+        ...(teamApiSportsId ? { apiSportsId: teamApiSportsId } : {}),
       },
       create: {
         eaId: teamData.eaId,
@@ -70,6 +76,7 @@ async function main() {
         shortName: shortName(teamData.name),
         imageUrl: teamData.imageUrl,
         leagueId: null, // No league for CONMEBOL teams
+        ...(teamApiSportsId ? { apiSportsId: teamApiSportsId } : {}),
       },
     });
     teamsCreated++;

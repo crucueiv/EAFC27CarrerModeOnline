@@ -1,6 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 import { getLeagueCountryInfo, isWomenLeague, isConmebolTournament, isPlayableLeague } from "@/lib/constants/league-country-map";
 import { normalizeSearchText } from "@/lib/search/normalize";
+import { fetchTeamApiSportsMap } from "@/lib/catalog/importEaCatalog";
 
 const prisma = new PrismaClient();
 
@@ -33,7 +34,10 @@ function shortName(name: string): string {
 async function main() {
   console.log("🏆 Importing Leagues & Teams...");
   
-  const teamGroups = await fetchEATeamGroups();
+  const [teamGroups, apiSportsMap] = await Promise.all([
+    fetchEATeamGroups(),
+    fetchTeamApiSportsMap(),
+  ]);
   
   let leaguesCreated = 0;
   let teamsCreated = 0;
@@ -85,6 +89,7 @@ async function main() {
 
     for (const team of group.teams) {
       const teamEaId = String(team.id);
+      const teamApiSportsId = apiSportsMap.get(teamEaId);
       
       await prisma.team.upsert({
         where: { eaId: teamEaId },
@@ -94,6 +99,7 @@ async function main() {
           shortName: shortName(team.label),
           imageUrl: team.imageUrl,
           leagueId: league.id,
+          ...(teamApiSportsId ? { apiSportsId: teamApiSportsId } : {}),
         },
         create: {
           eaId: teamEaId,
@@ -102,6 +108,7 @@ async function main() {
           shortName: shortName(team.label),
           imageUrl: team.imageUrl,
           leagueId: league.id,
+          ...(teamApiSportsId ? { apiSportsId: teamApiSportsId } : {}),
         },
       });
       teamsCreated++;

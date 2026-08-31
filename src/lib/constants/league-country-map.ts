@@ -76,7 +76,7 @@ const COUNTRY_MAP: Record<string, { countryEN: string; continentEN: string; isPl
 };
 
 export const WOMEN_LEAGUE_IDS = new Set([
-  "2216", "2218", "2221", "2222", "2228", "2229", "2230", "2231", "2232", "2233", "2236"
+  "2215", "2216", "2218", "2221", "2222", "2228", "2229", "2230", "2231", "2232", "2233", "2236"
 ]);
 
 export const CONMEBOL_TOURNAMENT_IDS = new Set(["1003", "1014"]);
