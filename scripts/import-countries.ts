@@ -1,10 +1,9 @@
 import { PrismaClient } from "@prisma/client";
 import { translateCountry } from "@/lib/constants/country-translations";
 import { NATIONAL_TEAMS_CONFIG, getNationalTeamFlagUrl } from "@/lib/constants/national-teams";
+import { fetchEARatingsPayload } from "@/lib/ea/ratings-client";
 
 const prisma = new PrismaClient();
-
-const EA_RATINGS_URL = "https://www.ea.com/_next/data/tSbhYVpPV7yhfzpVbM5JY/es/games/ea-sports-fc/ratings.json";
 
 interface EANationality {
   id: number;
@@ -15,10 +14,9 @@ interface EANationality {
 
 async function fetchEANationalities(): Promise<EANationality[]> {
   console.log("📥 Fetching EA nationalities...");
-  const response = await fetch(EA_RATINGS_URL, { headers: { Accept: "application/json" } });
-  if (!response.ok) throw new Error(`Failed to fetch EA ratings: ${response.status}`);
-  
-  const data = await response.json();
+  const data = await fetchEARatingsPayload<{
+    pageProps?: { auxData?: { defaultLocaleFilters?: { nationality?: EANationality[] } } };
+  }>();
   const nationalities = data.pageProps?.auxData?.defaultLocaleFilters?.nationality ?? [];
   console.log(`  Found ${nationalities.length} nationalities`);
   return nationalities;

@@ -26,6 +26,7 @@ export type TransferSearchParams = {
   nationalityId?: string;
   nationalityName?: string;
   freeAgents?: boolean;
+  excludeTeamId?: string;
   page?: number;
   pageSize?: number;
 };
@@ -55,6 +56,7 @@ export type TransferPlayerResult = {
     imageUrl: string | null;
     league: { id: string; name: string; imageUrl: string | null; eaId: string | null } | null;
   } | null;
+  isLoanEligible?: boolean;
   nationality: { id: string; name: string; code: string | null; flagUrl: string | null } | null;
 };
 
@@ -124,6 +126,7 @@ export function parseTransferSearchParams(searchParams: URLSearchParams): Transf
     nationalityId: searchParams.get("nationalityId")?.trim() || undefined,
     nationalityName: searchParams.get("nationalityName")?.trim() || undefined,
     freeAgents: searchParams.get("freeAgents") === "1" || searchParams.get("freeAgents") === "true",
+    excludeTeamId: searchParams.get("excludeTeamId")?.trim() || undefined,
     page: number("page"),
     pageSize: number("pageSize")
   };
@@ -166,18 +169,8 @@ function demoResults(params: TransferSearchParams): TransferPlayerResult[] {
       const stats = statFilters.every(([stat, filter]) => params[filter] === undefined || player[stat] >= params[filter]!);
       return textMatches && minOverall && maxOverall && position && freeAgent && team && league && nationality && stats;
     })
-    .map((player) => ({
-      id: player.id,
-      name: player.name,
-      position: player.position,
-      eaPositionId: null,
-      overall: player.overall,
-      potential: player.potential,
-      eaId: player.eaId,
-      avatarUrl: player.avatarUrl || (player.eaId
-        ? `https://ratings-images-prod.pulse.ea.com/FC25/full/player-portraits/p${player.eaId}.png`
-        : null),
-      price: calculatePlayerValueAndClause({
+    .map((player) => {
+      const financial = calculatePlayerValueAndClause({
         overall: player.overall,
         potential: player.potential,
         position: player.position,
@@ -187,42 +180,36 @@ function demoResults(params: TransferSearchParams): TransferPlayerResult[] {
         dribbling: player.dribbling,
         defending: player.defending,
         physical: player.physical
-      }).marketValue,
-      salary: calculatePlayerValueAndClause({
+      });
+      const isFreeAgent = player.currentTeam?.eaId === "FREE_AGENTS";
+      return {
+        id: player.id,
+        name: player.name,
+        position: player.position,
+        eaPositionId: null,
         overall: player.overall,
         potential: player.potential,
-        position: player.position,
-        pace: player.pace,
-        shooting: player.shooting,
-        passing: player.passing,
-        dribbling: player.dribbling,
-        defending: player.defending,
-        physical: player.physical
-      }).weeklyWage,
-      releaseClause: calculatePlayerValueAndClause({
-        overall: player.overall,
-        potential: player.potential,
-        position: player.position,
-        pace: player.pace,
-        shooting: player.shooting,
-        passing: player.passing,
-        dribbling: player.dribbling,
-        defending: player.defending,
-        physical: player.physical
-      }).releaseClause,
-      financialBreakdown: { performanceAverage: null },
-      role: "ROTACION",
-      stats: {
-        pace: player.pace,
-        shooting: player.shooting,
-        passing: player.passing,
-        dribbling: player.dribbling,
-        defending: player.defending,
-        physical: player.physical
-      },
-      currentTeam: player.currentTeam,
-      nationality: player.nationality
-    }))
+        eaId: player.eaId,
+        avatarUrl: player.avatarUrl || (player.eaId
+          ? `https://ratings-images-prod.pulse.ea.com/FC25/full/player-portraits/p${player.eaId}.png`
+          : null),
+        price: isFreeAgent ? 0 : financial.marketValue,
+        salary: financial.weeklyWage,
+        releaseClause: isFreeAgent ? 0 : financial.releaseClause,
+        financialBreakdown: { performanceAverage: null },
+        role: "ROTACION",
+        stats: {
+          pace: player.pace,
+          shooting: player.shooting,
+          passing: player.passing,
+          dribbling: player.dribbling,
+          defending: player.defending,
+          physical: player.physical
+        },
+        currentTeam: player.currentTeam,
+        nationality: player.nationality
+      };
+    })
     .filter((player) => params.maxPrice === undefined || player.price <= params.maxPrice);
 }
 
@@ -270,6 +257,7 @@ function serializePlayer(player: SearchPlayer): TransferPlayerResult {
   const avatarUrl = player.avatarUrl || (player.eaId
     ? `https://ratings-images-prod.pulse.ea.com/FC25/full/player-portraits/p${player.eaId}.png`
     : null);
+  const isFreeAgent = currentTeam?.eaId === "FREE_AGENTS";
   return {
     id: player.id,
     name: player.name,
@@ -279,9 +267,9 @@ function serializePlayer(player: SearchPlayer): TransferPlayerResult {
     potential: player.potential,
     eaId: player.eaId,
     avatarUrl,
-    price: financial.marketValue,
+    price: isFreeAgent ? 0 : financial.marketValue,
     salary: financial.weeklyWage,
-    releaseClause: financial.releaseClause,
+    releaseClause: isFreeAgent ? 0 : financial.releaseClause,
     financialBreakdown: { performanceAverage: financial.performanceAverage },
     role,
     stats: {
@@ -309,6 +297,8 @@ function serializePlayer(player: SearchPlayer): TransferPlayerResult {
             : null
         }
       : null,
+    isLoanEligible:
+      currentTeam !== null && currentTeam.eaId !== "FREE_AGENTS" && player.overall < 70,
     nationality: player.nationality
   };
 }
@@ -354,8 +344,9 @@ function filterSerializedPlayers(
         (!params.nationalityName || Boolean(player.nationality && normalizeSearchText(player.nationality.name).includes(normalizeSearchText(params.nationalityName))));
       const priceMatches = params.maxPrice === undefined || player.price <= params.maxPrice;
       const freeAgentMatches = !params.freeAgents || player.currentTeam?.eaId === "FREE_AGENTS";
+      const ownClubMatches = !params.excludeTeamId || player.currentTeam?.id !== params.excludeTeamId;
       return textMatches && positionMatches && minOverall && maxOverall && statsMatch &&
-        teamMatches && leagueMatches && nationalityMatches && priceMatches && freeAgentMatches;
+        teamMatches && leagueMatches && nationalityMatches && priceMatches && freeAgentMatches && ownClubMatches;
     });
 }
 
@@ -412,6 +403,17 @@ export async function getTransferSearchResults(input: TransferSearchParams = {})
         ...(params.nationalityName ? { normalizedName: { contains: normalizeSearchText(params.nationalityName) } } : {})
       };
     }
+    if (params.excludeTeamId) {
+      where.NOT = {
+        rosters: {
+          some: {
+            isActive: true,
+            teamId: params.excludeTeamId
+          }
+        }
+      };
+    }
+
     if (params.freeAgents) {
       where.rosters = {
         some: {

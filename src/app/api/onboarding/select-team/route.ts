@@ -1,6 +1,7 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
+import { ensureCareerGroupSeason2627 } from "@/lib/calendar/initializeCareerGroupSeason";
 
 export async function POST(req: Request) {
   const session = await auth();
@@ -27,6 +28,8 @@ export async function POST(req: Request) {
     if (!user) {
       return NextResponse.json({ error: "Usuario no encontrado" }, { status: 404 });
     }
+
+    const init = await ensureCareerGroupSeason2627(prisma, { teamId });
 
     const result = await prisma.$transaction(async (tx) => {
       if (team.managerProfile) {
@@ -61,10 +64,16 @@ export async function POST(req: Request) {
         data: { clubTeamId: teamId },
       });
 
+      await tx.careerGroupMember.upsert({
+        where: { userId_careerGroupId: { userId: user.id, careerGroupId: init.careerGroupId } },
+        create: { userId: user.id, careerGroupId: init.careerGroupId, role: "PLAYER" },
+        update: {},
+      });
+
       return { success: true, teamId, clubTeamId: teamId, teamName: team.name };
     });
 
-    return NextResponse.json(result);
+    return NextResponse.json({ ...result, seasonId: init.seasonId, careerGroupId: init.careerGroupId });
   } catch (error) {
     console.error("Error selecting team:", error);
     return NextResponse.json({ error: "Error interno" }, { status: 500 });

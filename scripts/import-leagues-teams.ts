@@ -1,11 +1,11 @@
 import { PrismaClient } from "@prisma/client";
 import { getLeagueCountryInfo, isWomenLeague, isConmebolTournament, isPlayableLeague } from "@/lib/constants/league-country-map";
+import { getLeagueFormatSpec } from "@/lib/league-formats/catalog";
 import { normalizeSearchText } from "@/lib/search/normalize";
 import { fetchTeamApiSportsMap } from "@/lib/catalog/importEaCatalog";
+import { fetchEARatingsPayload } from "@/lib/ea/ratings-client";
 
 const prisma = new PrismaClient();
-
-const EA_RATINGS_URL = "https://www.ea.com/_next/data/tSbhYVpPV7yhfzpVbM5JY/es/games/ea-sports-fc/ratings.json";
 
 interface EATeamGroup {
   id: string;
@@ -18,10 +18,9 @@ interface EATeamGroup {
 
 async function fetchEATeamGroups(): Promise<EATeamGroup[]> {
   console.log("📥 Fetching EA team groups (leagues + teams)...");
-  const response = await fetch(EA_RATINGS_URL, { headers: { Accept: "application/json" } });
-  if (!response.ok) throw new Error(`Failed to fetch EA ratings: ${response.status}`);
-  
-  const data = await response.json();
+  const data = await fetchEARatingsPayload<{
+    pageProps?: { auxData?: { defaultLocaleFilters?: { teamGroups?: EATeamGroup[] } } };
+  }>();
   const teamGroups = data.pageProps?.auxData?.defaultLocaleFilters?.teamGroups ?? [];
   console.log(`  Found ${teamGroups.length} team groups`);
   return teamGroups;
@@ -63,6 +62,7 @@ async function main() {
     const info = getLeagueCountryInfo(eaId);
     const representativeTeam = group.teams.find(t => t.isPopular) || group.teams[0];
     const leagueImageUrl = representativeTeam?.imageUrl ?? null;
+    const format = getLeagueFormatSpec(eaId);
 
     const league = await prisma.league.upsert({
       where: { eaId },
@@ -85,7 +85,10 @@ async function main() {
     leaguesCreated++;
 
     const isSelectable = isPlayableLeague(eaId);
-    console.log(`  ✓ League: ${name} (${info.country}) ${isSelectable ? "🎮" : "📋"}`);
+    const rulesTag = format
+      ? ` [kind=${format.kind} teams=${format.totalTeams} rounds=${format.roundsRegular}]`
+      : "";
+    console.log(`  ✓ League: ${name} (${info.country}) ${isSelectable ? "🎮" : "📋"}${rulesTag}`);
 
     for (const team of group.teams) {
       const teamEaId = String(team.id);

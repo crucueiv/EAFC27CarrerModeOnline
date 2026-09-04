@@ -22,8 +22,11 @@ async function main() {
   await runScript("Database Cleanup", "scripts/cleanup-database.ts");
   await runScript("Import Countries & NationalTeams", "scripts/import-countries.ts");
   await runScript("Import Leagues & Teams", "scripts/import-leagues-teams.ts");
-  await runScript("Import CONMEBOL Tournaments", "scripts/import-tournaments.ts");
+  await runScript("Import Tournaments & First Season Participants", "scripts/import-tournaments.ts");
   await runScript("Import Players", "scripts/import-players.ts");
+  await runScript("Seed League Formats", "prisma/seed-league-formats.ts");
+  await runScript("Seed Formations", "prisma/seed-formations.ts");
+  await runScript("Import Colors", "scripts/import-colors.ts");
 
   console.log("\n" + "=".repeat(60));
   console.log("🎉 MIGRATION COMPLETE!");

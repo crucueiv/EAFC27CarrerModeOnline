@@ -9,47 +9,46 @@ export async function GET(req: Request) {
   const country = searchParams.get("country");
 
   try {
+    const allLeagues = await prisma.league.findMany({
+      include: { _count: { select: { teams: true } } },
+      orderBy: { name: "asc" },
+    });
+
+    const playableLeagues = allLeagues.filter((league) => league._count.teams >= 10);
+
     if (!continent) {
-      const continents = await prisma.league.groupBy({
-        by: ["continent"],
-        _count: { continent: true },
-        orderBy: { continent: "asc" },
-      });
+      const countsByContinent = new Map<string, number>();
+      for (const league of playableLeagues) {
+        const current = countsByContinent.get(league.continent) ?? 0;
+        countsByContinent.set(league.continent, current + 1);
+      }
+
       return NextResponse.json(
-        continents.map((c) => ({ name: c.continent, count: c._count.continent }))
+        Array.from(countsByContinent.entries())
+          .map(([name, count]) => ({ name, count }))
+          .sort((a, b) => a.name.localeCompare(b.name))
       );
     }
 
     if (!country) {
-      const countries = await prisma.league.findMany({
-        where: { continent },
-        select: { country: true },
-        distinct: ["country"],
-        orderBy: { country: "asc" },
-      });
-      return NextResponse.json(
-        countries.map((c) => ({ name: c.country }))
-      );
+      const countries = Array.from(
+        new Set(
+          playableLeagues
+            .filter((league) => league.continent === continent)
+            .map((league) => league.country)
+        )
+      ).sort((a, b) => a.localeCompare(b));
+      return NextResponse.json(countries.map((name) => ({ name })));
     }
 
-    const leagues = await prisma.league.findMany({
-      where: {
-        continent,
-        country,
-        NOT: FEMALE_LEAGUE_KEYWORDS.map((kw) => ({
-          name: { contains: kw, mode: "insensitive" as const }
-        }))
-      },
-      select: {
-        id: true,
-        name: true,
-        imageUrl: true,
-        eaId: true,
-        country: true,
-        continent: true,
-      },
-      orderBy: { name: "asc" },
-    });
+    const leagues = playableLeagues.filter(
+      (league) =>
+        league.continent === continent &&
+        league.country === country &&
+        !FEMALE_LEAGUE_KEYWORDS.some((kw) =>
+          league.name.toLowerCase().includes(kw.toLowerCase())
+        )
+    );
 
     const leaguesWithIcons = await Promise.all(
       leagues.map(async (league) => {
@@ -67,7 +66,9 @@ export async function GET(req: Request) {
       })
     );
 
-    return NextResponse.json(leaguesWithIcons);
+    return NextResponse.json(
+      leaguesWithIcons.map(({ _count, ...rest }) => rest).sort((a, b) => a.name.localeCompare(b.name))
+    );
   } catch (error) {
     console.error("Error fetching leagues:", error);
     return NextResponse.json({ error: "Error interno" }, { status: 500 });

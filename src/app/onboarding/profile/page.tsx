@@ -80,23 +80,23 @@ export default function ProfileOnboardingPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-emerald-50 via-white to-slate-50 flex items-center justify-center px-4 py-12">
+    <div className="min-h-screen bg-[var(--theme-background)] flex items-center justify-center px-4 py-12">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-black text-pitch mb-2">Crea tu perfil</h1>
-          <p className="text-slate-500">Paso 1 de 3: Nombre de manager y foto</p>
+          <h1 className="text-3xl font-black text-[var(--theme-primary)] mb-2">Crea tu perfil</h1>
+          <p className="text-[var(--theme-muted)]">Paso 1 de 3: Nombre de manager y foto</p>
         </div>
 
-        <div className="bg-white rounded-3xl shadow-xl p-8 border border-slate-100">
+        <div className="bg-[var(--theme-card)] rounded-3xl shadow-xl p-8 border border-[var(--theme-border)]">
           <form onSubmit={handleSubmit} className="space-y-6">
             {error && (
-              <div className="rounded-lg bg-rose-50 border border-rose-200 p-3 text-sm text-rose-700">
+              <div className="rounded-lg bg-rose-100 border border-rose-300 p-3 text-sm text-rose-700 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800">
                 {error}
               </div>
             )}
 
             <div>
-              <label htmlFor="username" className="block text-sm font-medium text-slate-700 mb-2">
+              <label htmlFor="username" className="block text-sm font-medium text-[var(--theme-foreground)] mb-2">
                 Nombre de manager <span className="text-rose-500">*</span>
               </label>
               <input
@@ -107,8 +107,8 @@ export default function ProfileOnboardingPage() {
                   setUsername(e.target.value);
                   validateUsername(e.target.value);
                 }}
-                className={`w-full rounded-xl border px-4 py-3 text-slate-900 placeholder-slate-400 transition ${
-                  usernameError ? "border-rose-400 focus:ring-rose-400" : "border-slate-200 focus:ring-emerald-400"
+                className={`w-full rounded-xl border bg-[var(--theme-surface)] px-4 py-3 text-[var(--theme-foreground)] placeholder:text-[var(--theme-muted)] transition ${
+                  usernameError ? "border-rose-400 focus:ring-rose-400" : "border-[var(--theme-border)] focus:ring-[var(--theme-primary)]"
                 }`}
                 placeholder="Ej: GuardiolaFan23"
                 maxLength={20}
@@ -121,8 +121,8 @@ export default function ProfileOnboardingPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">
-                Foto de perfil <span className="text-slate-400">(opcional)</span>
+              <label className="block text-sm font-medium text-[var(--theme-foreground)] mb-2">
+                Foto de perfil <span className="text-[var(--theme-muted)]">(opcional)</span>
               </label>
               <AvatarUpload onUpload={setAvatarUrl} />
             </div>
@@ -130,7 +130,7 @@ export default function ProfileOnboardingPage() {
             <button
               type="submit"
               disabled={isLoading || !username.trim() || !!usernameError}
-              className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] transition py-3.5 px-6 text-white font-bold text-lg shadow-lg shadow-emerald-600/30 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              className="w-full rounded-xl bg-[var(--theme-primary)] hover:opacity-90 active:scale-[0.98] transition py-3.5 px-6 text-[var(--theme-on-accent)] font-bold text-lg shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               {isLoading ? (
                 <>

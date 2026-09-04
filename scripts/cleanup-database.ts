@@ -10,6 +10,9 @@ async function main() {
     "VerificationToken",
     "Session",
     "Account",
+    "LineupBench",
+    "LineupSlot",
+    "Lineup",
     "RatingSnapshot",
     "MatchStat",
     "MatchEvent",
@@ -29,6 +32,8 @@ async function main() {
     "Country",
     "CareerGroupMember",
     "CareerGroup",
+    "FormationSlot",
+    "Formation",
     "User",
   ];
 

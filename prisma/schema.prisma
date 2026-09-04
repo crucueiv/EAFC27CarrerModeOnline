@@ -15,6 +15,12 @@ enum MatchStatus {
   SIMULATED
 }
 
+enum MatchMode {
+  CPU_VS_CPU
+  PLAYER_VS_CPU
+  PLAYER_VS_PLAYER
+}
+
 enum MatchEventType {
   KICKOFF
   GOAL
@@ -25,20 +31,116 @@ enum MatchEventType {
   INJURY
   HALF_TIME
   FULL_TIME
+  EXTRA_TIME
+  PENALTY
+}
+
+enum MatchFormat {
+  SINGLE
+  TWO_LEGGED
+  BEST_OF_3
+  BEST_OF_5
 }
 
 enum TransferStatus {
   PROPOSED
   ACCEPTED
   REJECTED
+  CONTRACT_NEGOTIATION_PENDING
+  CONTRACT_NEGOTIATION_ACTIVE
+  CONTRACT_NEGOTIATION_ACCEPTED
+  CONTRACT_NEGOTIATION_REJECTED
   COMPLETED
   CANCELLED
+}
+
+enum LoanDuration {
+  SHORT_TERM
+  ONE_YEAR
+  TWO_YEARS
+}
+
+enum LoanStatus {
+  PROPOSED
+  COUNTERED
+  ACCEPTED
+  REJECTED
+  COMPLETED
+  CANCELLED
+  EXPIRED
+  BUY_OPTION_TRIGGERED
+  RETURNED
+}
+
+enum LeagueFormatKind {
+  SINGLE_TABLE
+  SINGLE_TABLE_PLAYOFF
+  SPLIT_GROUPS
+  TWO_SHORT_TOURNAMENTS
+  CONFERENCE_PLAYOFF
+}
+
+enum PromotionRelegationType {
+  DIRECT
+  PLAYOFF
+  RELEGATION_PLAYOFF
+  PLAYOUT
+  NONE
+}
+
+enum TrophyKind {
+  LEAGUE_CHAMPION
+  TITLE_PLAYOFF_CHAMPION
+  SEASON_CHAMPION
+  APERTURA_CHAMPION
+  CLAUSURA_CHAMPION
+  SHIELD
+  APERTURA_REGULAR_WINNER
+  CLAUSURA_REGULAR_WINNER
 }
 
 enum SeasonStatus {
   PLANNED
   ACTIVE
   COMPLETED
+  TRANSITION
+}
+
+enum TransferWindowKind {
+  SUMMER
+  WINTER
+  ONBOARDING_ONLY
+}
+
+enum CalendarLockReason {
+  PVP_MATCH_PENDING
+  TOURNAMENT_PHASE_WAIT
+  TRANSFER_WINDOW_SYNC_WAIT
+  SEASON_END_LOCK
+  SEASON_TRANSITION_LOCK
+  NONE
+}
+
+enum TransferWindowStatus {
+  SCHEDULED
+  OPEN
+  CLOSED
+}
+
+enum NegotiationStatus {
+  PENDING_AGREEMENT
+  AGREED_PENDING_WINDOW
+  AGREED_ACTIVE
+  COMPLETED
+  CANCELLED
+  REJECTED
+}
+
+enum TransferType {
+  PERMANENT
+  LOAN_SHORT_TERM
+  LOAN_1_YEAR
+  LOAN_2_YEARS
 }
 
 enum PlayerGender {
@@ -50,6 +152,14 @@ enum RosterRole {
   CLAVE
   IMPORTANTE
   ROTACION
+}
+
+enum TournamentScope {
+  CUP
+  LEAGUE
+  INTER_LEAGUE_PLAYOFF
+  CONTINENTAL
+  DOMESTIC_CUP
 }
 
 enum TournamentStageType {
@@ -76,6 +186,10 @@ model User {
   managedTeams      Team[]              @relation("TeamManager")
   transfersFrom     Transfer[]          @relation("TransferSeller")
   transfersTo       Transfer[]          @relation("TransferBuyer")
+  loansFrom         Loan[]              @relation("LoanSeller")
+  loansTo           Loan[]              @relation("LoanBuyer")
+  negotiationsAsBuyer  Negotiation[]   @relation("NegotiationBuyerUser")
+  negotiationsAsSeller Negotiation[]   @relation("NegotiationSellerUser")
   rosterAssignments Roster[]            @relation("RosterOwner")
   clubTeamId        String?             @unique
   clubTeam          Team?               @relation("UserClubTeam", fields: [clubTeamId], references: [id])
@@ -84,10 +198,13 @@ model User {
   emails            EmailMessage[]
   accounts          Account[]
   sessions          Session[]
+  trophies          Trophy[]
+  matchInputs       Match[]             @relation("MatchInputBy")
+  matchConfirmations Match[]            @relation("MatchConfirmedBy")
 }
 
 model Account {
-  id                String              @id @default(cuid())
+  id                String  @id @default(cuid())
   userId            String
   type              String
   provider          String
@@ -126,6 +243,8 @@ model CareerGroup {
   members     CareerGroupMember[]
   leagues     League[]
   seasons     Season[]
+  tournaments Tournament[]
+  clock       CareerGroupClock?
 }
 
 model CareerGroupMember {
@@ -140,20 +259,93 @@ model CareerGroupMember {
 }
 
 model League {
-  id            String       @id @default(cuid())
-  eaId          String?      @unique
-  name          String
-  normalizedName String      @default("")
-  country       String
-  continent     String
-  imageUrl      String?
-  careerGroupId String?
-  careerGroup   CareerGroup? @relation(fields: [careerGroupId], references: [id], onDelete: Cascade)
-  teams         Team[]
-  seasons       Season[]
-  createdAt     DateTime     @default(now())
+  id              String              @id @default(cuid())
+  eaId            String?             @unique
+  name            String
+  normalizedName  String              @default("")
+  country         String
+  continent       String
+  imageUrl        String?
+  primaryColor    String?             @default("#dc2626")
+  secondaryColor  String?             @default("#111827")
+  isPlayable      Boolean             @default(true)
+  formatId        String?
+  format          LeagueFormat?       @relation("LeagueToFormat")
+  careerGroupId   String?
+  careerGroup     CareerGroup?        @relation(fields: [careerGroupId], references: [id], onDelete: Cascade)
+  higherLeagueId  String?
+  higherLeague    League?             @relation("LeaguePromotion", fields: [higherLeagueId], references: [id])
+  lowerLeagues    League[]            @relation("LeaguePromotion")
+  teams           Team[]
+  seasons         Season[]
+  tournaments     Tournament[]
+  seasonConfigs   LeagueSeasonConfig[]
+  trophies        Trophy[]
+  createdAt       DateTime            @default(now())
   @@index([normalizedName])
   @@index([continent, country])
+}
+
+model LeagueFormat {
+  id                          String                  @id @default(cuid())
+  leagueId                    String                  @unique
+  league                      League                  @relation("LeagueToFormat", fields: [leagueId], references: [id], onDelete: Cascade)
+  kind                        LeagueFormatKind
+  totalTeams                  Int
+  roundsRegular               Int
+  hasReturn                   Boolean                 @default(true)
+  hasTitlePlayoff             Boolean                 @default(false)
+  titlePlayoffTopN            Int?
+  titlePlayoffFormat          String?
+  promotionType               PromotionRelegationType  @default(NONE)
+  promotionSlots              Int                     @default(0)
+  promotionPlayoffSlots       Int                     @default(0)
+  promotionPlayoffTopN        Int?
+  relegationType              PromotionRelegationType  @default(NONE)
+  relegationSlots             Int                     @default(0)
+  relegationPlayoffSlots      Int                     @default(0)
+  relegationPlayoffBottomN    Int?
+  tournamentCount             Int                     @default(1)
+  hasAnnualTable              Boolean                 @default(false)
+  annualTableWinsCopaLibertadores Boolean             @default(false)
+  usesReclasiTable            Boolean                 @default(false)
+  homeAndAwayBonus            String?
+  calendarSpanWeeks           Int                     @default(38)
+  matchweekIntervalDays       Int                     @default(7)
+  splitConfig                 String?
+}
+
+model LeagueSeasonConfig {
+  id                          String   @id @default(cuid())
+  leagueId                    String
+  seasonId                    String
+  league                      League   @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  season                      Season   @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  uefaBlock                   String?
+  championsSpots              Int      @default(0)
+  championsQualifyingSpots    Int      @default(0)
+  championsPlayoffSlots       Int      @default(0)
+  europaSpots                 Int      @default(0)
+  conferenceSpots             Int      @default(0)
+  libertadoresSpots           Int      @default(0)
+  libertadoresDirectSpots     Int      @default(0)
+  libertadoresQualifyingSpots Int      @default(0)
+  sudamericanaSpots           Int      @default(0)
+  extraFromSudamericanaWinner Boolean  @default(false)
+  usesReclasiTable            Boolean  @default(false)
+  @@unique([leagueId, seasonId])
+}
+
+model CountryCoefficient {
+  id        String  @id @default(cuid())
+  country   String
+  seasonId  String
+  ranking   Int
+  uefaBlock String
+  source    String  @default("MANUAL")
+  notes     String?
+  season    Season  @relation(fields: [seasonId], references: [id])
+  @@unique([country, seasonId])
 }
 
 model NationalTeam {
@@ -177,92 +369,107 @@ model NationalTeam {
 }
 
 model Team {
-  id               String       @id @default(cuid())
-  eaId             String?      @unique
-  apiSportsId      Int?         @unique
-  name             String
-  normalizedName   String       @default("")
-  shortName        String
-  imageUrl         String?
-  budget           Int          @default(50000000)
-  leagueId         String?
-  managerId        String?
-  league           League?      @relation(fields: [leagueId], references: [id])
-  manager          User?        @relation("TeamManager", fields: [managerId], references: [id])
-  managerProfile   Manager?     @relation("TeamRealManager")
-  userClub         User?        @relation("UserClubTeam")
-  rosters          Roster[]
-  homeMatches      Match[]      @relation("HomeTeam")
-  awayMatches      Match[]      @relation("AwayTeam")
-  transfersAsSeller Transfer[] @relation("SellerTeam")
-  transfersAsBuyer  Transfer[] @relation("BuyerTeam")
-  participants     TournamentParticipant[]
-  matchStats       MatchStat[]
+  id                String       @id @default(cuid())
+  eaId              String?      @unique
+  apiSportsId       Int?         @unique
+  name              String
+  normalizedName    String       @default("")
+  shortName         String
+  imageUrl          String?
+  primaryColor      String?      @default("#2563eb")
+  secondaryColor    String?      @default("#f8fafc")
+  budget            Int          @default(50000000)
+  committedBudget   Int          @default(0)
+  leagueId          String?
+  managerId         String?
+  league            League?      @relation(fields: [leagueId], references: [id])
+  manager           User?        @relation("TeamManager", fields: [managerId], references: [id])
+  managerProfile    Manager?     @relation("TeamRealManager")
+  userClub          User?        @relation("UserClubTeam")
+  rosters           Roster[]
+  homeMatches       Match[]      @relation("HomeTeam")
+  awayMatches       Match[]      @relation("AwayTeam")
+  transfersAsSeller Transfer[]   @relation("SellerTeam")
+  transfersAsBuyer  Transfer[]   @relation("BuyerTeam")
+  loansAsSeller     Loan[]       @relation("LoanSellerTeam")
+  loansAsBuyer      Loan[]       @relation("LoanBuyerTeam")
+  negotiationsAsBuyer  Negotiation[] @relation("NegotiationBuyerTeam")
+  negotiationsAsSeller Negotiation[] @relation("NegotiationSellerTeam")
+  participants      TournamentParticipant[]
+  matchStats        MatchStat[]
+  lineups           Lineup[]
+  trophies          Trophy[]
+  cupWinners        DomesticCupWinner[]
+  calendarStates    TeamCalendarState[]
   @@index([normalizedName])
 }
 
 model Manager {
-  id            String   @id @default(cuid())
-  apiSportsId   Int?     @unique
-  name          String
-  nationality   String?
-  avatarUrl     String?
-  teamId        String?  @unique
-  team          Team?    @relation("TeamRealManager", fields: [teamId], references: [id])
-  nationalTeamId String? @unique
+  id             String   @id @default(cuid())
+  apiSportsId    Int?     @unique
+  name           String
+  nationality    String?
+  avatarUrl      String?
+  teamId         String?  @unique
+  team           Team?    @relation("TeamRealManager", fields: [teamId], references: [id])
+  nationalTeamId String?  @unique
   nationalTeam   NationalTeam? @relation("ManagerNationalTeam", fields: [nationalTeamId], references: [id])
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
   @@index([teamId])
   @@index([nationalTeamId])
 }
 
 model Country {
-  id       String   @id @default(cuid())
-  eaId     String?  @unique
-  name     String
-  normalizedName String @default("")
-  code     String?
-  flagUrl  String?
-  players  Player[]
+  id             String  @id @default(cuid())
+  eaId           String? @unique
+  name           String
+  normalizedName String  @default("")
+  code           String?
+  flagUrl        String?
+  players        Player[]
   @@index([name])
   @@index([normalizedName])
 }
 
 model Player {
-  id              String            @id @default(cuid())
-  externalId      String?           @unique
-  eaId            Int?              @unique
-  avatarUrl       String?
-  name            String
-  normalizedName  String @default("")
-  gender          PlayerGender      @default(MALE)
-  birthdate       DateTime?
-  internationalReputation Int      @default(1)
-  position        String
-  eaPositionId    String?
-  overall         Int               @default(70)
-  potential       Int               @default(75)
-  pace            Int               @default(0)
-  shooting        Int               @default(0)
-  passing         Int               @default(0)
-  dribbling       Int               @default(0)
-  defending       Int               @default(0)
-  physical        Int               @default(0)
-  marketValue     Int               @default(1000000)
-  skillMoves      Int               @default(0)
-  weakFoot        Int               @default(0)
-  preferredFoot   String?           @default("RIGHT")
-  nationalityId   String?
-  nationality     Country?          @relation(fields: [nationalityId], references: [id])
-  createdAt       DateTime          @default(now())
-  updatedAt       DateTime          @updatedAt
-  rosters         Roster[]
-  ratingSnapshots RatingSnapshot[]
-  transfers       Transfer[]
-  matchStats      MatchStat[]       @relation("MatchPlayerStats")
-  events          MatchEvent[]
-  matchesAsMvp    Match[]            @relation("MatchMvp")
+  id                      String            @id @default(cuid())
+  externalId              String?           @unique
+  eaId                    Int?              @unique
+  avatarUrl               String?
+  name                    String
+  normalizedName          String            @default("")
+  gender                  PlayerGender      @default(MALE)
+  birthdate               DateTime?
+  internationalReputation Int               @default(1)
+  position                String
+  eaPositionId            String?
+  overall                 Int               @default(70)
+  potential               Int               @default(75)
+  pace                    Int               @default(0)
+  shooting                Int               @default(0)
+  passing                 Int               @default(0)
+  dribbling               Int               @default(0)
+  defending               Int               @default(0)
+  physical                Int               @default(0)
+  marketValue             Int               @default(1000000)
+  skillMoves              Int               @default(0)
+  weakFoot                Int               @default(0)
+  preferredFoot           String?           @default("RIGHT")
+  nationalityId           String?
+  nationality             Country?          @relation(fields: [nationalityId], references: [id])
+  createdAt               DateTime          @default(now())
+  updatedAt               DateTime          @updatedAt
+  rosters                 Roster[]
+  ratingSnapshots         RatingSnapshot[]
+  transfers               Transfer[]
+  loans                   Loan[]
+  negotiations           Negotiation[]
+  matchStats              MatchStat[]       @relation("MatchPlayerStats")
+  events                  MatchEvent[]
+  matchesAsMvp            Match[]           @relation("MatchMvp")
+  lineupSlots             LineupSlot[]
+  lineupBench             LineupBench[]
   @@index([nationalityId])
   @@index([name])
   @@index([normalizedName])
@@ -270,177 +477,350 @@ model Player {
 }
 
 model Roster {
-  id        String   @id @default(cuid())
+  id        String     @id @default(cuid())
   teamId    String
   playerId  String
   ownerId   String?
   seasonId  String?
   squadNo   Int?
   role      RosterRole @default(ROTACION)
-  isActive  Boolean  @default(true)
-  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  player    Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
-  owner     User?    @relation("RosterOwner", fields: [ownerId], references: [id])
-  season    Season?  @relation(fields: [seasonId], references: [id])
+  isActive  Boolean    @default(true)
+  team      Team       @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  player    Player     @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  owner     User?      @relation("RosterOwner", fields: [ownerId], references: [id])
+  season    Season?    @relation(fields: [seasonId], references: [id])
   @@unique([teamId, playerId, seasonId])
   @@index([playerId, isActive, seasonId])
 }
 
 model Season {
-  id            String        @id @default(cuid())
-  name          String
-  status        SeasonStatus  @default(PLANNED)
-  startDate     DateTime
-  endDate       DateTime
-  careerGroupId String
-  leagueId      String?
-  careerGroup   CareerGroup   @relation(fields: [careerGroupId], references: [id], onDelete: Cascade)
-  league        League?       @relation(fields: [leagueId], references: [id])
-  matches       Match[]
-  rosters       Roster[]
-  ratingSnapshots RatingSnapshot[]
-  tournaments   Tournament[]
-  transfers     Transfer[]
-  currentWeek   Int           @default(1)
-  isTransferWindowOpen Boolean @default(true)
+  id                    String              @id @default(cuid())
+  name                  String
+  status                SeasonStatus        @default(PLANNED)
+  startDate             DateTime
+  endDate               DateTime
+  careerGroupId         String
+  leagueId              String?
+  careerGroup           CareerGroup         @relation(fields: [careerGroupId], references: [id], onDelete: Cascade)
+  league                League?             @relation(fields: [leagueId], references: [id])
+  matches               Match[]
+  rosters               Roster[]
+  ratingSnapshots       RatingSnapshot[]
+  tournaments           Tournament[]
+  transfers             Transfer[]
+  currentWeek           Int                 @default(1)
+  isTransferWindowOpen  Boolean             @default(true)
+  pointsWin             Int                 @default(3)
+  pointsDraw            Int                 @default(1)
+  pointsLoss            Int                 @default(0)
+  seasonConfigs         LeagueSeasonConfig[]
+  coefficients          CountryCoefficient[]
+  trophies              Trophy[]
+  loans                 Loan[]
+  negotiations          Negotiation[]
+  matchweekIntervalDays Int                 @default(7)
+  transferWindows     TransferWindow[]
+  calendarStates      TeamCalendarState[]
   @@index([careerGroupId, status])
 }
 
 model Match {
-  id            String       @id @default(cuid())
-  seasonId      String
+  id                String              @id @default(cuid())
+  seasonId          String
   tournamentStageId String?
-  homeTeamId    String
-  awayTeamId    String
-  scheduledAt   DateTime
-  status        MatchStatus  @default(PENDING)
-  homeScore     Int?
-  awayScore     Int?
-  mvpPlayerId   String?
-  homeTeam      Team         @relation("HomeTeam", fields: [homeTeamId], references: [id])
-  awayTeam      Team         @relation("AwayTeam", fields: [awayTeamId], references: [id])
-  mvpPlayer     Player?      @relation("MatchMvp", fields: [mvpPlayerId], references: [id])
-  season        Season       @relation(fields: [seasonId], references: [id], onDelete: Cascade)
-  tournamentStage TournamentStage? @relation(fields: [tournamentStageId], references: [id])
-  events        MatchEvent[]
-  stats         MatchStat[]
-  createdAt     DateTime     @default(now())
+  tournamentId      String?
+  homeTeamId        String
+  awayTeamId        String
+  scheduledAt       DateTime
+  status            MatchStatus         @default(PENDING)
+  mode              MatchMode           @default(CPU_VS_CPU)
+  matchFormat       MatchFormat         @default(SINGLE)
+  seriesId          String?
+  gameNumber        Int?
+  homeScore         Int?
+  awayScore         Int?
+  homeAggScore      Int?
+  awayAggScore      Int?
+  wentToExtraTime   Boolean             @default(false)
+  wentToPenalties   Boolean             @default(false)
+  penaltyHomeScore  Int?
+  penaltyAwayScore  Int?
+  mvpPlayerId       String?
+  matchweek         Int?
+  homeTeam          Team                @relation("HomeTeam", fields: [homeTeamId], references: [id])
+  awayTeam          Team                @relation("AwayTeam", fields: [awayTeamId], references: [id])
+  mvpPlayer         Player?             @relation("MatchMvp", fields: [mvpPlayerId], references: [id])
+  season            Season              @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  tournamentStage   TournamentStage?    @relation(fields: [tournamentStageId], references: [id])
+  tournament        Tournament?         @relation(fields: [tournamentId], references: [id])
+  events            MatchEvent[]
+  stats             MatchStat[]
+  lineup            Lineup?
+  playerInputById   String?
+  playerInputBy     User?               @relation("MatchInputBy", fields: [playerInputById], references: [id])
+  playerInputAt     DateTime?
+  homeConfirmed     Boolean             @default(false)
+  awayConfirmed     Boolean             @default(false)
+  confirmedById     String?
+  confirmedBy       User?               @relation("MatchConfirmedBy", fields: [confirmedById], references: [id])
+  createdAt         DateTime            @default(now())
   @@index([seasonId, scheduledAt])
+  @@index([seriesId])
+  @@index([tournamentStageId])
+  @@index([homeTeamId, scheduledAt])
+  @@index([awayTeamId, scheduledAt])
+  @@index([mode, status])
 }
 
 model MatchEvent {
   id        String          @id @default(cuid())
-  matchId  String
-  playerId String?
-  minute   Int
-  type     MatchEventType
-  teamId   String?
-  detail   String?
-  match    Match           @relation(fields: [matchId], references: [id], onDelete: Cascade)
-  player   Player?         @relation(fields: [playerId], references: [id])
+  matchId   String
+  playerId  String?
+  minute    Int
+  type      MatchEventType
+  teamId    String?
+  detail    String?
+  match     Match           @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  player    Player?         @relation(fields: [playerId], references: [id])
   @@index([matchId, minute])
 }
 
 model MatchStat {
-  id          String  @id @default(cuid())
-  matchId     String
-  playerId    String
-  teamId      String
-  isHome      Boolean
-  minutes     Int     @default(0)
-  goals       Int     @default(0)
-  assists     Int     @default(0)
-  shots       Int     @default(0)
-  shotsOnTarget Int   @default(0)
-  passes      Int     @default(0)
-  passAccuracy Float   @default(0)
-  tackles     Int     @default(0)
-  fouls       Int     @default(0)
-  yellowCards Int     @default(0)
-  redCards    Int     @default(0)
-  rating      Float   @default(6.0)
+  id             String  @id @default(cuid())
+  matchId        String
+  playerId       String
+  teamId         String
+  isHome         Boolean
+  minutes        Int     @default(0)
+  goals          Int     @default(0)
+  assists        Int     @default(0)
+  shots          Int     @default(0)
+  shotsOnTarget  Int     @default(0)
+  passes         Int     @default(0)
+  passAccuracy   Float   @default(0)
+  tackles        Int     @default(0)
+  fouls          Int     @default(0)
+  yellowCards    Int     @default(0)
+  redCards       Int     @default(0)
+  rating         Float   @default(6.0)
   positionPlayed String?
-  match       Match   @relation(fields: [matchId], references: [id], onDelete: Cascade)
-  player      Player  @relation("MatchPlayerStats", fields: [playerId], references: [id])
-  team        Team    @relation(fields: [teamId], references: [id])
+  match          Match   @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  player         Player  @relation("MatchPlayerStats", fields: [playerId], references: [id])
+  team           Team    @relation(fields: [teamId], references: [id])
   @@unique([matchId, playerId])
 }
 
 model Transfer {
-  id         String         @id @default(cuid())
-  seasonId   String
-  playerId   String
-  sellerTeamId String
-  buyerTeamId  String
-  sellerId   String?
-  buyerId    String?
-  fee        Int            @default(0)
-  status     TransferStatus @default(PROPOSED)
-  createdAt  DateTime       @default(now())
-  completedAt DateTime?
-  season     Season         @relation(fields: [seasonId], references: [id], onDelete: Cascade)
-  player     Player         @relation(fields: [playerId], references: [id])
-  sellerTeam Team           @relation("SellerTeam", fields: [sellerTeamId], references: [id])
-  buyerTeam  Team           @relation("BuyerTeam", fields: [buyerTeamId], references: [id])
-  seller     User?          @relation("TransferSeller", fields: [sellerId], references: [id])
-  buyer      User?          @relation("TransferBuyer", fields: [buyerId], references: [id])
+  id            String          @id @default(cuid())
+  seasonId      String
+  playerId      String
+  sellerTeamId  String
+  buyerTeamId   String
+  sellerId      String?
+  buyerId       String?
+  fee           Int             @default(0)
+  status        TransferStatus  @default(PROPOSED)
+  createdAt     DateTime        @default(now())
+  completedAt   DateTime?
+  negotiationId String?         @unique
+  negotiation   Negotiation?    @relation(fields: [negotiationId], references: [id])
+  season        Season          @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  player        Player          @relation(fields: [playerId], references: [id])
+  sellerTeam    Team            @relation("SellerTeam", fields: [sellerTeamId], references: [id])
+  buyerTeam     Team            @relation("BuyerTeam", fields: [buyerTeamId], references: [id])
+  seller        User?           @relation("TransferSeller", fields: [sellerId], references: [id])
+  buyer         User?           @relation("TransferBuyer", fields: [buyerId], references: [id])
+  @@index([seasonId, status])
+  @@index([buyerTeamId, playerId, status])
+  @@index([sellerTeamId, status])
+}
+
+model Loan {
+  id                String         @id @default(cuid())
+  seasonId          String
+  playerId          String
+  sellerTeamId      String
+  buyerTeamId       String
+  sellerId          String?
+  buyerId           String?
+  duration          LoanDuration
+  wageShareBuyerPct Int            @default(50)
+  hasBuyOption      Boolean        @default(false)
+  buyOptionPrice    Int?
+  fee               Int            @default(0)
+  status            LoanStatus     @default(PROPOSED)
+  startsAt          DateTime
+  endsAt            DateTime
+  createdAt         DateTime       @default(now())
+  completedAt       DateTime?
+  metadata          Json?
+  negotiationId     String?        @unique
+  negotiation       Negotiation?   @relation(fields: [negotiationId], references: [id])
+  squadRoleSnapshot String?
+  season            Season         @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  player            Player         @relation(fields: [playerId], references: [id])
+  sellerTeam        Team           @relation("LoanSellerTeam", fields: [sellerTeamId], references: [id])
+  buyerTeam         Team           @relation("LoanBuyerTeam", fields: [buyerTeamId], references: [id])
+  seller            User?          @relation("LoanSeller", fields: [sellerId], references: [id])
+  buyer             User?          @relation("LoanBuyer", fields: [buyerId], references: [id])
+  @@index([seasonId, status])
+  @@index([buyerTeamId, status])
+  @@index([sellerTeamId, status])
+  @@index([endsAt, status])
+}
+
+model Negotiation {
+  id                   String            @id @default(cuid())
+  playerId             String
+  buyerTeamId          String
+  sellerTeamId         String
+  buyerId              String?
+  sellerId             String?
+  seasonId             String
+  type                 TransferType
+  status               NegotiationStatus @default(PENDING_AGREEMENT)
+  agreedPrice          Float
+  buyoutOptionPrice    Float?
+  sellerSalaryPercent  Int               @default(0)
+  buyerSalaryPercent   Int               @default(100)
+  offeredWage          Float
+  offeredContractYears Int?
+  squadRole            String?
+  effectiveDate        DateTime
+  windowOpensAt        DateTime
+  createdAt            DateTime          @default(now())
+  decidedAt            DateTime?
+
+  player      Player    @relation(fields: [playerId], references: [id])
+  buyerTeam   Team      @relation("NegotiationBuyerTeam", fields: [buyerTeamId], references: [id])
+  sellerTeam  Team      @relation("NegotiationSellerTeam", fields: [sellerTeamId], references: [id])
+  season      Season    @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  buyer       User?     @relation("NegotiationBuyerUser", fields: [buyerId], references: [id])
+  seller      User?     @relation("NegotiationSellerUser", fields: [sellerId], references: [id])
+  transfer    Transfer?
+  loan        Loan?
+
+  @@index([playerId, status])
+  @@index([buyerTeamId, status])
+  @@index([sellerTeamId, status])
+  @@index([status, effectiveDate])
   @@index([seasonId, status])
 }
 
 model RatingSnapshot {
-  id          String   @id @default(cuid())
-  playerId    String
-  seasonId    String?
-  provider    String
-  externalId  String?
-  overall     Int
-  potential   Int?
-  position    String?
-  capturedAt  DateTime @default(now())
-  player      Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
-  season      Season?  @relation(fields: [seasonId], references: [id])
+  id         String   @id @default(cuid())
+  playerId   String
+  seasonId   String?
+  provider   String
+  externalId String?
+  overall    Int
+  potential  Int?
+  position   String?
+  capturedAt DateTime @default(now())
+  player     Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  season     Season?  @relation(fields: [seasonId], references: [id])
   @@index([playerId, capturedAt])
 }
 
 model Tournament {
-  id        String             @id @default(cuid())
-  seasonId  String?
-  name      String
-  stages    TournamentStage[]
-  participants TournamentParticipant[]
-  season    Season?             @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  id            String                  @id @default(cuid())
+  seasonId      String?
+  name          String
+  scope         TournamentScope         @default(CUP)
+  careerGroupId String?
+  leagueId      String?
+  format        String?
+  domesticCupId String?                 @unique
+  domesticCup   DomesticCup?            @relation(fields: [domesticCupId], references: [id])
+  season        Season?                 @relation(fields: [seasonId], references: [id])
+  careerGroup   CareerGroup?            @relation(fields: [careerGroupId], references: [id])
+  league        League?                 @relation(fields: [leagueId], references: [id])
+  stages        TournamentStage[]
+  participants  TournamentParticipant[]
+  matches       Match[]
+  @@index([seasonId])
+  @@index([leagueId])
 }
 
 model TournamentStage {
-  id           String                    @id @default(cuid())
-  tournamentId String
-  name         String
-  type         TournamentStageType
-  order        Int
-  tournament   Tournament                @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
-  matches      Match[]
-  dependencies TournamentStageDependency[] @relation("DependentStage")
-  dependedOnBy TournamentStageDependency[] @relation("PrerequisiteStage")
+  id              String                @id @default(cuid())
+  tournamentId    String
+  name            String
+  type            TournamentStageType
+  order           Int
+  matchFormat     MatchFormat           @default(SINGLE)
+  parentStageId   String?
+  parentStage     TournamentStage?      @relation("StageParent", fields: [parentStageId], references: [id])
+  childStages     TournamentStage[]     @relation("StageParent")
+  tournament      Tournament            @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  matches         Match[]
+  dependencies    TournamentStageDependency[] @relation("DependentStage")
+  dependedOnBy    TournamentStageDependency[] @relation("PrerequisiteStage")
+  zone            String?
+  isGroupPhase              Boolean @default(false)
+  isKnockout                Boolean @default(false)
+  requiresAllGroupMatchesComplete Boolean @default(false)
   @@unique([tournamentId, order])
+  @@index([tournamentId, isGroupPhase])
+  @@index([tournamentId, isKnockout])
 }
 
 model TournamentStageDependency {
-  id              String          @id @default(cuid())
-  dependentStageId String
+  id                 String          @id @default(cuid())
+  dependentStageId   String
   prerequisiteStageId String
-  dependentStage  TournamentStage @relation("DependentStage", fields: [dependentStageId], references: [id], onDelete: Cascade)
-  prerequisiteStage TournamentStage @relation("PrerequisiteStage", fields: [prerequisiteStageId], references: [id], onDelete: Cascade)
+  dependentStage     TournamentStage @relation("DependentStage", fields: [dependentStageId], references: [id], onDelete: Cascade)
+  prerequisiteStage  TournamentStage @relation("PrerequisiteStage", fields: [prerequisiteStageId], references: [id], onDelete: Cascade)
   @@unique([dependentStageId, prerequisiteStageId])
 }
 
 model TournamentParticipant {
-  id           String      @id @default(cuid())
-  tournamentId String
-  teamId       String
-  seed         Int?
-  tournament   Tournament  @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
-  team         Team        @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  id                  String     @id @default(cuid())
+  tournamentId        String
+  teamId              String
+  seed                Int?
+  zone                String?
+  groupName           String?
+  tournament          Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  team                Team       @relation(fields: [teamId], references: [id], onDelete: Cascade)
   @@unique([tournamentId, teamId])
+}
+
+model DomesticCup {
+  id        String      @id @default(cuid())
+  leagueId  String
+  country   String
+  name      String
+  format    String      @default("SINGLE_ELIMINATION")
+  createdAt DateTime    @default(now())
+  tournament Tournament?
+  winners   DomesticCupWinner[]
+}
+
+model DomesticCupWinner {
+  id           String     @id @default(cuid())
+  domesticCupId String
+  seasonId     String
+  teamId       String
+  cup          DomesticCup @relation(fields: [domesticCupId], references: [id], onDelete: Cascade)
+  team         Team       @relation(fields: [teamId], references: [id])
+  @@unique([domesticCupId, seasonId])
+}
+
+model Trophy {
+  id        String      @id @default(cuid())
+  seasonId  String
+  leagueId  String
+  teamId    String
+  userId    String?
+  kind      TrophyKind
+  awardedAt DateTime    @default(now())
+  metadata  Json?
+  season    Season      @relation(fields: [seasonId], references: [id])
+  league    League      @relation(fields: [leagueId], references: [id])
+  team      Team        @relation(fields: [teamId], references: [id])
+  user      User?       @relation(fields: [userId], references: [id])
+  @@unique([seasonId, leagueId, kind, teamId])
 }
 
 model EmailMessage {
@@ -455,4 +835,109 @@ model EmailMessage {
   createdAt DateTime @default(now())
   @@index([userId, read])
   @@index([userId, createdAt])
+}
+
+model Formation {
+  id        String           @id
+  name      String
+  category  String
+  slots     FormationSlot[]
+  lineups   Lineup[]
+  createdAt DateTime         @default(now())
+}
+
+model FormationSlot {
+  id          String    @id @default(cuid())
+  formationId String
+  slotIndex   Int
+  position    String
+  label       String
+  formation   Formation @relation(fields: [formationId], references: [id], onDelete: Cascade)
+  @@unique([formationId, slotIndex])
+}
+
+model Lineup {
+  id          String        @id @default(cuid())
+  teamId      String
+  matchId     String?       @unique
+  formationId String
+  name        String?
+  isDefault   Boolean       @default(false)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  team        Team          @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  match       Match?        @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  formation   Formation     @relation(fields: [formationId], references: [id])
+  slots       LineupSlot[]
+  bench       LineupBench[]
+
+  @@unique([teamId, matchId])
+  @@index([teamId, isDefault])
+}
+
+model LineupSlot {
+  id        String  @id @default(cuid())
+  lineupId  String
+  slotIndex Int
+  playerId  String
+  position  String
+  lineup    Lineup  @relation(fields: [lineupId], references: [id], onDelete: Cascade)
+  player    Player  @relation(fields: [playerId], references: [id])
+  @@unique([lineupId, slotIndex])
+}
+
+model LineupBench {
+  id       String @id @default(cuid())
+  lineupId String
+  playerId String
+  order    Int
+  lineup   Lineup @relation(fields: [lineupId], references: [id], onDelete: Cascade)
+  player   Player @relation(fields: [playerId], references: [id])
+  @@unique([lineupId, order])
+}
+
+model TransferWindow {
+  id              String              @id @default(cuid())
+  seasonId        String
+  kind            TransferWindowKind
+  status          TransferWindowStatus @default(SCHEDULED)
+  opensAt         DateTime
+  closesAt        DateTime
+  opensOnboarding Boolean             @default(true)
+  createdAt       DateTime            @default(now())
+  openedAt        DateTime?
+  closedAt        DateTime?
+  season          Season              @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  @@unique([seasonId, kind])
+  @@index([status, opensAt, closesAt])
+  @@index([opensAt, closesAt])
+}
+
+model TeamCalendarState {
+  id              String              @id @default(cuid())
+  teamId          String
+  seasonId        String
+  careerGroupId   String
+  currentDate     DateTime
+  maxAllowedDate  DateTime
+  isLocked        Boolean             @default(false)
+  lockReason      CalendarLockReason  @default(NONE)
+  lockMetadata    Json?
+  lastAdvanceAt   DateTime            @default(now())
+  version         Int                 @default(0)
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  team            Team                @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  season          Season              @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  @@unique([teamId, seasonId])
+  @@index([seasonId, currentDate])
+  @@index([careerGroupId, isLocked])
+  @@index([careerGroupId, currentDate])
+}
+
+model CareerGroupClock {
+  careerGroupId       String   @id
+  lastSyncAt          DateTime @default(now())
+  pendingSyncWindowId String?
+  careerGroup         CareerGroup @relation(fields: [careerGroupId], references: [id], onDelete: Cascade)
 }

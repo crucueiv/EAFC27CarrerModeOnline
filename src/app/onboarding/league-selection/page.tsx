@@ -77,43 +77,43 @@ export default function LeagueSelectionPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-emerald-50 via-white to-slate-50 px-4 py-12">
+    <div className="min-h-screen bg-[var(--theme-background)] px-4 py-12">
       <div className="w-full max-w-4xl mx-auto">
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-black text-pitch mb-2">Elige tu liga</h1>
-          <p className="text-slate-500">Paso 1 de 2: Selecciona continente, país y liga</p>
+          <h1 className="text-3xl font-black text-[var(--theme-primary)] mb-2">Elige tu liga</h1>
+          <p className="text-[var(--theme-muted)]">Paso 1 de 2: Selecciona continente, país y liga</p>
         </div>
 
         <div className="mb-6 flex items-center justify-center gap-2">
           <button
             className={`px-4 py-2 rounded-xl text-sm font-medium transition ${
               step === "continent"
-                ? "bg-emerald-600 text-white"
-                : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                ? "bg-[var(--theme-primary)] text-[var(--theme-on-accent)]"
+                : "bg-[var(--theme-card-alt)] text-[var(--theme-muted)] hover:opacity-80"
             }`}
             onClick={() => setStep("continent")}
             disabled={isLoading}
           >
             Continente
           </button>
-          <span className="text-slate-300">/</span>
+          <span className="text-[var(--theme-muted)]">/</span>
           <button
             className={`px-4 py-2 rounded-xl text-sm font-medium transition ${
               step === "country"
-                ? "bg-emerald-600 text-white"
-                : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                ? "bg-[var(--theme-primary)] text-[var(--theme-on-accent)]"
+                : "bg-[var(--theme-card-alt)] text-[var(--theme-muted)] hover:opacity-80"
             }`}
             onClick={() => selectedContinent && setStep("country")}
             disabled={isLoading || !selectedContinent}
           >
             País
           </button>
-          <span className="text-slate-300">/</span>
+          <span className="text-[var(--theme-muted)]">/</span>
           <button
             className={`px-4 py-2 rounded-xl text-sm font-medium transition ${
               step === "league"
-                ? "bg-emerald-600 text-white"
-                : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                ? "bg-[var(--theme-primary)] text-[var(--theme-on-accent)]"
+                : "bg-[var(--theme-card-alt)] text-[var(--theme-muted)] hover:opacity-80"
             }`}
             onClick={() => selectedCountry && setStep("league")}
             disabled={isLoading || !selectedCountry}
@@ -123,25 +123,25 @@ export default function LeagueSelectionPage() {
         </div>
 
         {error && (
-          <div className="mb-6 rounded-lg bg-rose-50 border border-rose-200 p-3 text-sm text-rose-700">
+          <div className="mb-6 rounded-lg bg-rose-100 border border-rose-300 p-3 text-sm text-rose-700 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800">
             {error}
           </div>
         )}
 
         {step === "continent" && (
-          <div className="bg-white rounded-3xl shadow-xl p-6 border border-slate-100">
-            <h2 className="text-xl font-bold text-pitch mb-6">Selecciona un continente</h2>
+          <div className="bg-[var(--theme-card)] rounded-3xl shadow-xl p-6 border border-[var(--theme-border)]">
+            <h2 className="text-xl font-bold text-[var(--theme-primary)] mb-6">Selecciona un continente</h2>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
               {continents.map((continent) => (
                 <button
                   key={continent.name}
                   onClick={() => fetchCountries(continent.name)}
                   disabled={isLoading}
-                  className="p-6 rounded-2xl border-2 border-slate-200 hover:border-emerald-400 hover:bg-emerald-50 transition-all text-left"
+                  className="p-6 rounded-2xl border-2 border-[var(--theme-border)] hover:border-[var(--theme-primary)] hover:bg-[var(--theme-accent-soft)] transition-all text-left"
                 >
                   <div className="text-4xl mb-2">🌍</div>
-                  <div className="font-semibold text-pitch">{continent.name}</div>
-                  <div className="text-sm text-slate-500">{continent.count} ligas</div>
+                  <div className="font-semibold text-[var(--theme-primary)]">{continent.name}</div>
+                  <div className="text-sm text-[var(--theme-muted)]">{continent.count} ligas</div>
                 </button>
               ))}
             </div>
@@ -149,12 +149,12 @@ export default function LeagueSelectionPage() {
         )}
 
         {step === "country" && (
-          <div className="bg-white rounded-3xl shadow-xl p-6 border border-slate-100">
+          <div className="bg-[var(--theme-card)] rounded-3xl shadow-xl p-6 border border-[var(--theme-border)]">
             <div className="mb-6 flex items-center justify-between">
-              <h2 className="text-xl font-bold text-pitch">Países en {selectedContinent}</h2>
+              <h2 className="text-xl font-bold text-[var(--theme-primary)]">Países en {selectedContinent}</h2>
               <button
                 onClick={() => setStep("continent")}
-                className="text-sm text-slate-500 hover:text-slate-700"
+                className="text-sm text-[var(--theme-muted)] hover:text-[var(--theme-foreground)]"
               >
                 ← Cambiar continente
               </button>
@@ -165,9 +165,9 @@ export default function LeagueSelectionPage() {
                   key={country.name}
                   onClick={() => fetchLeagues(selectedContinent, country.name)}
                   disabled={isLoading}
-                  className="p-4 rounded-xl border-2 border-slate-200 hover:border-emerald-400 hover:bg-emerald-50 transition-all text-left"
+                  className="p-4 rounded-xl border-2 border-[var(--theme-border)] hover:border-[var(--theme-primary)] hover:bg-[var(--theme-accent-soft)] transition-all text-left"
                 >
-                  <div className="font-medium text-pitch">{country.name}</div>
+                  <div className="font-medium text-[var(--theme-primary)]">{country.name}</div>
                 </button>
               ))}
             </div>
@@ -175,18 +175,18 @@ export default function LeagueSelectionPage() {
         )}
 
         {step === "league" && (
-          <div className="bg-white rounded-3xl shadow-xl p-6 border border-slate-100">
+          <div className="bg-[var(--theme-card)] rounded-3xl shadow-xl p-6 border border-[var(--theme-border)]">
             <div className="mb-6 flex items-center justify-between">
-              <h2 className="text-xl font-bold text-pitch">Ligas en {selectedCountry}</h2>
+              <h2 className="text-xl font-bold text-[var(--theme-primary)]">Ligas en {selectedCountry}</h2>
               <button
                 onClick={() => setStep("country")}
-                className="text-sm text-slate-500 hover:text-slate-700"
+                className="text-sm text-[var(--theme-muted)] hover:text-[var(--theme-foreground)]"
               >
                 ← Cambiar país
               </button>
             </div>
             {leagues.length === 0 ? (
-              <div className="text-center py-12 text-slate-500">
+              <div className="text-center py-12 text-[var(--theme-muted)]">
                 No hay ligas disponibles para este país
               </div>
             ) : (
@@ -196,21 +196,21 @@ export default function LeagueSelectionPage() {
                     key={league.id}
                     onClick={() => handleLeagueSelect(league)}
                     disabled={isLoading}
-                    className="p-4 rounded-2xl border-2 border-slate-200 hover:border-emerald-400 hover:bg-emerald-50 transition-all text-left group"
+                    className="p-4 rounded-2xl border-2 border-[var(--theme-border)] hover:border-[var(--theme-primary)] hover:bg-[var(--theme-accent-soft)] transition-all text-left group"
                   >
                     <div className="flex items-center gap-4">
                       {league.imageUrl && (
                         <img
                           src={league.imageUrl}
                           alt={league.name}
-                          className="w-14 h-14 rounded-lg object-cover bg-slate-100"
+                          className="w-14 h-14 rounded-lg object-cover bg-[var(--theme-card-alt)]"
                         />
                       )}
                       <div className="flex-1 min-w-0">
-                        <div className="font-semibold text-pitch truncate">{league.name}</div>
-                        <div className="text-sm text-slate-500">{league.country}</div>
+                        <div className="font-semibold text-[var(--theme-primary)] truncate">{league.name}</div>
+                        <div className="text-sm text-[var(--theme-muted)]">{league.country}</div>
                       </div>
-                      <svg className="w-6 h-6 text-slate-300 group-hover:text-emerald-500 transition" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg className="w-6 h-6 text-[var(--theme-muted)] group-hover:text-[var(--theme-primary)] transition" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                       </svg>
                     </div>

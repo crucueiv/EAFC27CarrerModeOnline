@@ -71,7 +71,7 @@ function generateDeterministicName(seed: string): string {
 }
 
 async function saveFallbackManager(teamId: string, teamName?: string): Promise<ManagerResult> {
-  const name = teamName ? generateDeterministicName(teamId) : "Director Técnico";
+  const name = generateDeterministicName(teamId);
 
   if (!prisma) {
     return {
@@ -104,7 +104,7 @@ async function saveFallbackManager(teamId: string, teamName?: string): Promise<M
       id: saved.id,
       name: saved.name,
       nationality: null,
-      avatarUrl: saved.avatarUrl,
+      avatarUrl: saved.avatarUrl || GENERIC_AVATAR_URL,
       apiSportsId: null,
       teamId,
     };
@@ -132,9 +132,9 @@ export async function getOrFetchManager(teamId: string): Promise<ManagerResult> 
     const isNumericId = /^\d+$/.test(teamId);
     const team = await prisma.team.findFirst({
       where: isNumericId
-        ? { OR: [{ id: teamId }, { apiSportsId: Number(teamId) }] }
-        : { id: teamId },
-      include: { managerProfile: true },
+        ? { OR: [{ id: teamId }, { eaId: teamId }, { apiSportsId: Number(teamId) }] }
+        : { OR: [{ id: teamId }, { eaId: teamId }] },
+      include: { managerProfile: true, manager: true },
     });
 
     if (!team) {
@@ -145,25 +145,27 @@ export async function getOrFetchManager(teamId: string): Promise<ManagerResult> 
 
     const internalTeamId = team.id;
 
-    if (team.managerProfile && team.managerProfile.apiSportsId) {
+    // Si ya existe un perfil de mánager guardado en DB, usarlo directamente
+    if (team.managerProfile) {
       console.log(`[getOrFetchManager] ✓ returning cached manager: ${team.managerProfile.name}`);
       return {
         id: team.managerProfile.id,
         name: team.managerProfile.name,
         nationality: team.managerProfile.nationality,
-        avatarUrl: team.managerProfile.avatarUrl,
+        avatarUrl: team.managerProfile.avatarUrl || GENERIC_AVATAR_URL,
         apiSportsId: team.managerProfile.apiSportsId,
         teamId: internalTeamId,
       };
     }
 
-    if (team.managerProfile && !team.managerProfile.apiSportsId) {
-      console.log(`[getOrFetchManager] ✓ returning cached fallback manager: ${team.managerProfile.name}`);
+    // Si el equipo lo gestiona un usuario humano en la liga online
+    if (team.manager) {
+      console.log(`[getOrFetchManager] ✓ returning user club manager: ${team.manager.name}`);
       return {
-        id: team.managerProfile.id,
-        name: team.managerProfile.name,
-        nationality: team.managerProfile.nationality,
-        avatarUrl: team.managerProfile.avatarUrl,
+        id: `user-${team.manager.id}`,
+        name: team.manager.name || `DT de ${team.name}`,
+        nationality: null,
+        avatarUrl: team.manager.image || GENERIC_AVATAR_URL,
         apiSportsId: null,
         teamId: internalTeamId,
       };

@@ -10,6 +10,8 @@ import {
 } from '@/lib/transfers/negotiationEngine';
 import { getManagerAction } from '@/app/api/managers/managers'; // Server Action: consulta/crea el mánager real en BD o API-Sports
 
+const FALLBACK_AVATAR = '/default-avatar.svg';
+
 export interface ClubNegotiationModalProps {
   isOpen: boolean;
   player: TransferPlayerResult & {
@@ -67,12 +69,11 @@ export const ClubNegotiationModal: React.FC<ClubNegotiationModalProps> = ({
     setErrorMessage(null);
     setDialogue(getRandomQuote('greeting', { player: player.name }));
 
-    // Si tenemos teamId, consultamos SIEMPRE el mánager real vía Server Action
-    // (getManagerAction -> getOrFetchManager: BD -> API-Sports), aunque ya
-    // vengan managerName/managerAvatarUrl en props, porque esos valores pueden
-    // ser un placeholder desactualizado. Si no hay teamId, no hay forma de
-    // resolverlo y usamos lo que venga por props.
-    if (player.teamId) {
+    const isFreeAgentTransfer = player.currentTeam?.eaId === 'FREE_AGENTS' || !player.teamId;
+
+    // Los agentes libres no negocian con un club ni requieren resolver un director técnico
+    // del equipo origen. Se omite la búsqueda para evitar llamadas innecesarias en rutas no válidas.
+    if (!isFreeAgentTransfer && player.teamId) {
       setManagerName(player.managerName || 'Cargando Mánager...');
       setManagerAvatar(player.managerAvatarUrl || null);
       setIsLoadingManager(true);
@@ -86,14 +87,17 @@ export const ClubNegotiationModal: React.FC<ClubNegotiationModalProps> = ({
         .catch((err) => {
           if (cancelled) return;
           console.error('Error al obtener mánager:', err);
-          setManagerName(player.managerName || 'Director Técnico');
-          setManagerAvatar(player.managerAvatarUrl || null);
+          // Fallback robusto: nunca mostrar "Director Técnico" genérico ni
+          // una URL rota. Usamos el nombre del club vendedor como referencia
+          // y el avatar local placeholder (con onError que también cae aquí).
+          setManagerName(player.managerName || `Cuerpo técnico de ${player.teamName ?? 'club rival'}`);
+          setManagerAvatar(player.managerAvatarUrl || FALLBACK_AVATAR);
         })
         .finally(() => {
           if (!cancelled) setIsLoadingManager(false);
         });
     } else {
-      setManagerName(player.managerName || 'Director Técnico');
+      setManagerName(player.managerName || 'Agente libre');
       setManagerAvatar(player.managerAvatarUrl || null);
       setIsLoadingManager(false);
     }
@@ -213,11 +217,17 @@ export const ClubNegotiationModal: React.FC<ClubNegotiationModalProps> = ({
         <div className="bg-slate-950 p-6 flex flex-col items-center border-b border-slate-800/80 relative">
           <div className="relative mb-3">
             <img
-              src={managerAvatar || '/default-avatar.png'}
+              src={managerAvatar || FALLBACK_AVATAR}
               alt={managerName}
               className={`w-24 h-24 rounded-full border-4 border-slate-700 object-cover shadow-lg transition-opacity duration-300 ${
                 isLoadingManager ? 'opacity-50 animate-pulse' : 'opacity-100'
               }`}
+              onError={(e) => {
+                const el = e.currentTarget;
+                if (el.src !== window.location.origin + FALLBACK_AVATAR && !el.src.endsWith(FALLBACK_AVATAR)) {
+                  el.src = FALLBACK_AVATAR;
+                }
+              }}
             />
             {callStatus === 'active' && (
               <span className="absolute bottom-1 right-1 flex h-4 w-4">

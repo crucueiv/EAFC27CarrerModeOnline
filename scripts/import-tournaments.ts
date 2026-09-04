@@ -1,10 +1,12 @@
 import { PrismaClient } from "@prisma/client";
-import { normalizeSearchText } from "@/lib/search/normalize";
-import { fetchTeamApiSportsMap } from "@/lib/catalog/importEaCatalog";
+import { promises as fs } from "fs";
+import path from "path";
+import { normalizeSearchText } from "../src/lib/search/normalize";
+import { fetchTeamApiSportsMap } from "../src/lib/catalog/importEaCatalog";
+import { fetchEARatingsPayload } from "../src/lib/ea/ratings-client";
+import type { FirstSeasonParticipant } from "../src/lib/constants/FirstSeasonCompetitionsParticipants/types";
 
 const prisma = new PrismaClient();
-
-const EA_RATINGS_URL = "https://www.ea.com/_next/data/tSbhYVpPV7yhfzpVbM5JY/es/games/ea-sports-fc/ratings.json";
 
 interface EATeamGroup {
   id: string;
@@ -13,9 +15,9 @@ interface EATeamGroup {
 }
 
 async function fetchEATeamGroups(): Promise<EATeamGroup[]> {
-  const response = await fetch(EA_RATINGS_URL, { headers: { Accept: "application/json" } });
-  if (!response.ok) throw new Error(`Failed to fetch EA ratings: ${response.status}`);
-  const data = await response.json();
+  const data = await fetchEARatingsPayload<{
+    pageProps?: { auxData?: { defaultLocaleFilters?: { teamGroups?: EATeamGroup[] } } };
+  }>();
   return data.pageProps?.auxData?.defaultLocaleFilters?.teamGroups ?? [];
 }
 
@@ -24,103 +26,141 @@ function shortName(name: string): string {
 }
 
 const CONMEBOL_TOURNAMENTS = {
-  "1003": { name: "CONMEBOL Libertadores", type: "CONTINENTAL_CUP" },
-  "1014": { name: "CONMEBOL Sudamericana", type: "CONTINENTAL_CUP" },
+  "1003": { id: "conmebol-1003", name: "CONMEBOL Libertadores" },
+  "1014": { id: "conmebol-1014", name: "CONMEBOL Sudamericana" },
 } as const;
 
+const UEFA_TOURNAMENTS = [
+  { id: "uefa-champions-league-2627", name: "UEFA Champions League" },
+  { id: "uefa-europa-league-2627", name: "UEFA Europa League" },
+  { id: "uefa-conference-league-2627", name: "UEFA Conference League" },
+] as const;
+
+const FIRST_SEASON_FILES = [
+  { fileName: "ChampionsLeague_Participants_2026-27.json", defaultId: "uefa-champions-league-2627", name: "UEFA Champions League" },
+  { fileName: "EuropaLeague_Participants_2026-27.json", defaultId: "uefa-europa-league-2627", name: "UEFA Europa League" },
+  { fileName: "ConferenceLeague_Participants_2026-27.json", defaultId: "uefa-conference-league-2627", name: "UEFA Conference League" },
+  { fileName: "Libertadores_Participants_2027.json", defaultId: "conmebol-1003", name: "CONMEBOL Libertadores" },
+  { fileName: "Sudamericana_Participants_2027.json", defaultId: "conmebol-1014", name: "CONMEBOL Sudamericana" },
+] as const;
+
 async function main() {
-  console.log("🏆 Importing CONMEBOL Tournaments & Teams...");
-  
-  const [teamGroups, apiSportsMap] = await Promise.all([
-    fetchEATeamGroups(),
-    fetchTeamApiSportsMap(),
-  ]);
-  const conmebolGroups = teamGroups.filter(g => g.id in CONMEBOL_TOURNAMENTS);
-  
-  // Step 1: Collect ALL unique CONMEBOL teams (deduplicate by EA ID)
-  const allConmebolTeams = new Map<string, { eaId: string; name: string; imageUrl: string }>();
-  
-  for (const group of conmebolGroups) {
-    for (const team of group.teams) {
-      const teamEaId = String(team.id);
-      if (!allConmebolTeams.has(teamEaId)) {
-        allConmebolTeams.set(teamEaId, {
-          eaId: teamEaId,
-          name: team.label,
-          imageUrl: team.imageUrl,
+  console.log("🏆 Importing Tournaments & First Season Participants...");
+
+  // Step 1: Create/Upsert UEFA & CONMEBOL Tournaments
+  for (const uefa of UEFA_TOURNAMENTS) {
+    await prisma.tournament.upsert({
+      where: { id: uefa.id },
+      update: { name: uefa.name },
+      create: { id: uefa.id, name: uefa.name, seasonId: null },
+    });
+    console.log(`  ✓ Tournament created/updated: ${uefa.name} (id: ${uefa.id})`);
+  }
+
+  for (const key of Object.keys(CONMEBOL_TOURNAMENTS)) {
+    const info = CONMEBOL_TOURNAMENTS[key as keyof typeof CONMEBOL_TOURNAMENTS];
+    await prisma.tournament.upsert({
+      where: { id: info.id },
+      update: { name: info.name },
+      create: { id: info.id, name: info.name, seasonId: null },
+    });
+    console.log(`  ✓ Tournament created/updated: ${info.name} (id: ${info.id})`);
+  }
+
+  // Step 2: Fetch CONMEBOL Teams from EA catalog if needed
+  try {
+    const [teamGroups, apiSportsMap] = await Promise.all([
+      fetchEATeamGroups(),
+      fetchTeamApiSportsMap(),
+    ]);
+    const conmebolGroups = teamGroups.filter((g) => g.id in CONMEBOL_TOURNAMENTS);
+
+    for (const group of conmebolGroups) {
+      for (const team of group.teams) {
+        const teamEaId = String(team.id);
+        const teamApiSportsId = apiSportsMap.get(teamEaId);
+        await prisma.team.upsert({
+          where: { eaId: teamEaId },
+          update: {
+            name: team.label,
+            normalizedName: normalizeSearchText(team.label),
+            shortName: shortName(team.label),
+            imageUrl: team.imageUrl,
+            ...(teamApiSportsId ? { apiSportsId: teamApiSportsId } : {}),
+          },
+          create: {
+            eaId: teamEaId,
+            name: team.label,
+            normalizedName: normalizeSearchText(team.label),
+            shortName: shortName(team.label),
+            imageUrl: team.imageUrl,
+            leagueId: null,
+            ...(teamApiSportsId ? { apiSportsId: teamApiSportsId } : {}),
+          },
         });
       }
     }
+  } catch (err) {
+    console.warn("  ⚠️ Could not fetch extra CONMEBOL EA team groups payload:", err);
   }
 
-  console.log(`  Found ${allConmebolTeams.size} unique CONMEBOL teams`);
+  // Step 3: Seed Participants from FirstSeasonCompetitionsParticipants JSON files
+  const dirPath = path.join(process.cwd(), "src", "lib", "constants", "FirstSeasonCompetitionsParticipants");
+  let totalParticipantsSeeded = 0;
 
-  // Step 2: Create unique teams (leagueId: null, not playable)
-  let teamsCreated = 0;
-  for (const [eaId, teamData] of allConmebolTeams) {
-    const teamApiSportsId = apiSportsMap.get(eaId);
-    await prisma.team.upsert({
-      where: { eaId },
-      update: {
-        name: teamData.name,
-        normalizedName: normalizeSearchText(teamData.name),
-        shortName: shortName(teamData.name),
-        imageUrl: teamData.imageUrl,
-        leagueId: null, // No league for CONMEBOL teams
-        ...(teamApiSportsId ? { apiSportsId: teamApiSportsId } : {}),
-      },
-      create: {
-        eaId: teamData.eaId,
-        name: teamData.name,
-        normalizedName: normalizeSearchText(teamData.name),
-        shortName: shortName(teamData.name),
-        imageUrl: teamData.imageUrl,
-        leagueId: null, // No league for CONMEBOL teams
-        ...(teamApiSportsId ? { apiSportsId: teamApiSportsId } : {}),
-      },
-    });
-    teamsCreated++;
-  }
+  for (const item of FIRST_SEASON_FILES) {
+    const filePath = path.join(dirPath, item.fileName);
+    try {
+      const raw = await fs.readFile(filePath, "utf-8");
+      const participants = JSON.parse(raw) as FirstSeasonParticipant[];
 
-  console.log(`  ✅ Created ${teamsCreated} unique CONMEBOL teams`);
+      for (const p of participants) {
+        const tournamentId = p.tournamentId || item.defaultId;
 
-  // Step 3: Create tournaments and link teams
-  let tournamentsCreated = 0;
-  let participantsCreated = 0;
+        // Ensure tournament exists
+        await prisma.tournament.upsert({
+          where: { id: tournamentId },
+          update: { name: item.name },
+          create: { id: tournamentId, name: item.name, seasonId: null },
+        });
 
-  for (const group of conmebolGroups) {
-    const tourneyInfo = CONMEBOL_TOURNAMENTS[group.id as keyof typeof CONMEBOL_TOURNAMENTS];
-    if (!tourneyInfo) continue;
+        // Resolve Team by teamEaId or normalizedName
+        let dbTeam = await prisma.team.findUnique({
+          where: { eaId: p.teamEaId },
+        });
+        if (!dbTeam) {
+          dbTeam = await prisma.team.findFirst({
+            where: { normalizedName: normalizeSearchText(p.teamName) },
+          });
+        }
 
-    const tournament = await prisma.tournament.upsert({
-      where: { id: `conmebol-${group.id}` },
-      update: { name: tourneyInfo.name },
-      create: { id: `conmebol-${group.id}`, name: tourneyInfo.name, seasonId: null },
-    });
-    tournamentsCreated++;
+        if (!dbTeam) {
+          console.warn(`  ⚠️ Participant team not found in DB: ${p.teamName} (teamEaId: ${p.teamEaId})`);
+          continue;
+        }
 
-    for (const team of group.teams) {
-      const teamEaId = String(team.id);
-      const dbTeam = await prisma.team.findUnique({ where: { eaId: teamEaId } });
-      if (!dbTeam) {
-        console.log(`  ⚠️ Team not found: ${team.label} (EA ID: ${teamEaId})`);
-        continue;
+        await prisma.tournamentParticipant.upsert({
+          where: {
+            tournamentId_teamId: {
+              tournamentId,
+              teamId: dbTeam.id,
+            },
+          },
+          update: {},
+          create: {
+            tournamentId,
+            teamId: dbTeam.id,
+          },
+        });
+        totalParticipantsSeeded++;
       }
-
-      await prisma.tournamentParticipant.upsert({
-        where: { tournamentId_teamId: { tournamentId: tournament.id, teamId: dbTeam.id } },
-        update: {},
-        create: { tournamentId: tournament.id, teamId: dbTeam.id },
-      });
-      participantsCreated++;
+      console.log(`  ✅ Seeded ${participants.length} participants from ${item.fileName}`);
+    } catch (err) {
+      console.error(`  ❌ Error processing file ${item.fileName}:`, err);
     }
-    
-    console.log(`  ✓ Tournament: ${tourneyInfo.name} (${group.teams.length} teams)`);
   }
 
-  console.log(`✅ Created ${tournamentsCreated} Tournaments`);
-  console.log(`✅ Created ${participantsCreated} Tournament Participants`);
-  console.log(`✅ Created ${teamsCreated} unique CONMEBOL teams (leagueId: null)`);
+  console.log(`\n🎉 Tournament and Participant Import Complete! Total participants: ${totalParticipantsSeeded}`);
   await prisma.$disconnect();
 }
 

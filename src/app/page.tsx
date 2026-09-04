@@ -16,13 +16,17 @@ export default function LandingPage() {
 
   const handleContinue = () => {
     setIsLoading(true);
-    router.push("/onboarding/profile");
+    if (session?.user?.clubTeamId) {
+      router.push("/dashboard");
+    } else {
+      router.push("/onboarding/profile");
+    }
   };
 
   if (status === "loading") {
     return (
-      <div className="min-h-screen bg-gradient-to-b from-emerald-50 via-white to-slate-50 flex items-center justify-center">
-        <svg className="animate-spin h-10 w-10 text-emerald-600" viewBox="0 0 24 24">
+      <div className="min-h-screen bg-[var(--theme-background)] flex items-center justify-center">
+        <svg className="animate-spin h-10 w-10 text-[var(--theme-accent)]" viewBox="0 0 24 24">
           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
         </svg>
@@ -31,27 +35,27 @@ export default function LandingPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-emerald-50 via-white to-slate-50 flex items-center justify-center px-4">
+    <div className="min-h-screen bg-[var(--theme-background)] flex items-center justify-center px-4">
       <div className="w-full max-w-2xl text-center">
         <div className="mb-12">
-          <h1 className="text-5xl md:text-7xl font-black text-pitch tracking-tight mb-6">
+          <h1 className="text-5xl md:text-7xl font-black text-[var(--theme-primary)] tracking-tight mb-6">
             EAFC27
-            <span className="text-emerald-600"> Carrera Online</span>
+            <span className="text-[var(--theme-accent)]"> Carrera Online</span>
           </h1>
-          <p className="text-xl md:text-2xl text-slate-600 max-w-2xl mx-auto">
+          <p className="text-xl md:text-2xl text-[var(--theme-muted)] max-w-2xl mx-auto">
             Gestiona tu club, negocia fichajes, compite contra otros managers y lleva a tu equipo a la gloria.
           </p>
         </div>
 
-        <div className="bg-white rounded-3xl shadow-xl p-8 md:p-12 border border-slate-100">
+        <div className="bg-[var(--theme-card)] rounded-3xl shadow-xl p-8 md:p-12 border border-[var(--theme-border)]">
           <div className="mb-8">
-            <div className="mx-auto w-20 h-20 rounded-full bg-emerald-100 flex items-center justify-center mb-6">
-              <svg className="w-10 h-10 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div className="mx-auto w-20 h-20 rounded-full bg-[var(--theme-accent-soft)] flex items-center justify-center mb-6">
+              <svg className="w-10 h-10 text-[var(--theme-accent)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
               </svg>
             </div>
-            <h2 className="text-2xl font-bold text-pitch mb-2">Inicia tu carrera</h2>
-            <p className="text-slate-500">
+            <h2 className="text-2xl font-bold text-[var(--theme-primary)] mb-2">Inicia tu carrera</h2>
+            <p className="text-[var(--theme-muted)]">
               {session
                 ? "Bienvenido de vuelta, continúa con tu perfil"
                 : "Conecta con Google y crea tu perfil de manager en segundos"}
@@ -62,15 +66,19 @@ export default function LandingPage() {
             <button
               onClick={handleContinue}
               disabled={isLoading}
-              className="w-full max-w-xs mx-flex items-center justify-center gap-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] transition py-4 px-8 text-white font-bold text-lg shadow-lg shadow-emerald-600/30 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full max-w-xs mx-auto flex items-center justify-center gap-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 active:scale-[0.98] transition py-4 px-8 text-slate-950 font-extrabold text-lg shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {isLoading ? "Cargando..." : "Continuar →"}
+              {isLoading
+                ? "Cargando..."
+                : session.user?.clubTeamId
+                ? "Ir a tu Dashboard →"
+                : "Crear tu perfil de manager →"}
             </button>
           ) : (
             <button
               onClick={handleGoogleSignIn}
               disabled={isLoading}
-              className="w-full max-w-xs mx-auto flex items-center justify-center gap-3 rounded-xl bg-slate-900 hover:bg-slate-800 active:scale-[0.98] transition py-4 px-8 text-white font-bold text-lg shadow-lg shadow-slate-900/20 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full max-w-xs mx-auto flex items-center justify-center gap-3 rounded-xl bg-[var(--theme-foreground)] hover:opacity-90 active:scale-[0.98] transition py-4 px-8 text-[var(--theme-background)] font-bold text-lg shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <svg className="w-6 h-6" viewBox="0 0 24 24">
                 <path
@@ -94,13 +102,13 @@ export default function LandingPage() {
             </button>
           )}
 
-          <p className="mt-6 text-sm text-slate-400">
+          <p className="mt-6 text-sm text-[var(--theme-muted)]">
             Al continuar, aceptas nuestros{" "}
-            <a href="#" className="underline hover:text-slate-600">
+            <a href="#" className="underline hover:opacity-80">
               Términos de servicio
             </a>{" "}
             y{" "}
-            <a href="#" className="underline hover:text-slate-600">
+            <a href="#" className="underline hover:opacity-80">
               Política de privacidad
             </a>
           </p>
@@ -108,31 +116,31 @@ export default function LandingPage() {
 
         <div className="mt-12 grid grid-cols-3 gap-6 text-center">
           <div className="p-4">
-            <div className="mx-auto w-12 h-12 rounded-xl bg-emerald-100 flex items-center justify-center mb-3">
-              <svg className="w-6 h-6 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div className="mx-auto w-12 h-12 rounded-xl bg-[var(--theme-accent-soft)] flex items-center justify-center mb-3">
+              <svg className="w-6 h-6 text-[var(--theme-accent)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
               </svg>
             </div>
-            <h3 className="font-semibold text-pitch">Fichajes reales</h3>
-            <p className="text-sm text-slate-500 mt-1">Negocia con otros managers</p>
+            <h3 className="font-semibold text-[var(--theme-primary)]">Fichajes reales</h3>
+            <p className="text-sm text-[var(--theme-muted)] mt-1">Negocia con otros managers</p>
           </div>
           <div className="p-4">
-            <div className="mx-auto w-12 h-12 rounded-xl bg-blue-100 flex items-center justify-center mb-3">
-              <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div className="mx-auto w-12 h-12 rounded-xl bg-[var(--theme-accent-soft)] flex items-center justify-center mb-3">
+              <svg className="w-6 h-6 text-[var(--theme-accent)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
               </svg>
             </div>
-            <h3 className="font-semibold text-pitch">Multijugador</h3>
-            <p className="text-sm text-slate-500 mt-1">Compite contra managers reales</p>
+            <h3 className="font-semibold text-[var(--theme-primary)]">Multijugador</h3>
+            <p className="text-sm text-[var(--theme-muted)] mt-1">Compite contra managers reales</p>
           </div>
           <div className="p-4">
-            <div className="mx-auto w-12 h-12 rounded-xl bg-amber-100 flex items-center justify-center mb-3">
-              <svg className="w-6 h-6 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div className="mx-auto w-12 h-12 rounded-xl bg-[var(--theme-accent-soft)] flex items-center justify-center mb-3">
+              <svg className="w-6 h-6 text-[var(--theme-accent)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
               </svg>
             </div>
-            <h3 className="font-semibold text-pitch">Datos oficiales EA</h3>
-            <p className="text-sm text-slate-500 mt-1">Ratings y plantillas actualizadas</p>
+            <h3 className="font-semibold text-[var(--theme-primary)]">Datos oficiales EA</h3>
+            <p className="text-sm text-[var(--theme-muted)] mt-1">Ratings y plantillas actualizadas</p>
           </div>
         </div>
       </div>

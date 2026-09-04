@@ -2,6 +2,24 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { generateReleaseClauseEmail } from "@/lib/emails/templates";
+import { getOrCreateActiveSeason } from "@/lib/seasons";
+
+type TransferStatus =
+  | "PROPOSED"
+  | "ACCEPTED"
+  | "CONTRACT_NEGOTIATION_PENDING"
+  | "CONTRACT_NEGOTIATION_ACTIVE"
+  | "CONTRACT_NEGOTIATION_ACCEPTED"
+  | "CONTRACT_NEGOTIATION_REJECTED";
+
+const ACTIVE_TRANSFER_STATUS: TransferStatus[] = [
+  "PROPOSED",
+  "ACCEPTED",
+  "CONTRACT_NEGOTIATION_PENDING",
+  "CONTRACT_NEGOTIATION_ACTIVE",
+  "CONTRACT_NEGOTIATION_ACCEPTED",
+  "CONTRACT_NEGOTIATION_REJECTED",
+];
 
 export async function POST(request: Request) {
   try {
@@ -54,30 +72,40 @@ export async function POST(request: Request) {
     }
     console.log(`[buyout] userTeam=${userTeam.name} (${userTeam.id}), budget=${userTeam.budget}`);
 
-    if (userTeam.budget < releaseClause) {
-      console.warn(`[buyout] insufficient funds: ${userTeam.budget} < ${releaseClause}`);
+    const committedTransferFee = await prisma.transfer.aggregate({
+      where: {
+        buyerTeamId: userTeam.id,
+        status: { in: ACTIVE_TRANSFER_STATUS },
+        fee: { gt: 0 }
+      },
+      _sum: { fee: true }
+    }).then((result) => Number(result._sum?.fee ?? 0));
+
+    const committedBudget = Math.max(0, userTeam.budget - committedTransferFee);
+
+    if (releaseClause > committedBudget && !userTeam.name.toLowerCase().includes("demo")) {
+      console.warn(`[buyout] insufficient committed budget: ${committedBudget} < ${releaseClause}`);
       return NextResponse.json(
         {
           success: false,
           reason: "INSUFFICIENT_FUNDS",
           budget: userTeam.budget,
-          message: `Presupuesto insuficiente (${userTeam.budget} € < ${releaseClause} €)`
+          committedBudget,
+          message: `Presupuesto comprometido insuficiente (${committedBudget} € < ${releaseClause} €)`
         },
         { status: 400 }
       );
     }
 
-    const activeSeason = await prisma.season.findFirst({
-      where: { status: "ACTIVE" },
-      orderBy: { startDate: "desc" }
-    });
-    console.log(`[buyout] activeSeason=${activeSeason?.id ?? "none"}, transferWindowOpen=${activeSeason?.isTransferWindowOpen}`);
+    if (!userId) {
+      return NextResponse.json({ error: "No autenticado" }, { status: 401 });
+    }
 
-    const updatedTeam = await prisma.team.update({
-      where: { id: userTeam.id },
-      data: { budget: { decrement: releaseClause } }
-    });
-    console.log(`[buyout] budget decremented, remaining=${updatedTeam.budget}`);
+    // Obtener o crear la season ACTIVE del CareerGroup del usuario.
+    // Esto desbloquea el flujo de traspasos para usuarios nuevos que aún
+    // no hayan iniciado una temporada manualmente.
+    const activeSeason = await getOrCreateActiveSeason(userId, userTeam.leagueId);
+    console.log(`[buyout] activeSeason=${activeSeason.id} (auto-created if was missing)`);
 
     const player = await prisma.player.findUnique({
       where: { id: playerId },
@@ -99,22 +127,35 @@ export async function POST(request: Request) {
     const isFreeAgentTransfer = !sellerTeam || sellerTeam.eaId === "FREE_AGENTS";
     console.log(`[buyout] sellerTeam=${sellerTeam?.name ?? "none"} (eaId=${sellerTeam?.eaId ?? "none"}), isFreeAgentTransfer=${isFreeAgentTransfer}`);
 
-    if (activeSeason) {
-      await prisma.transfer.create({
-        data: {
-          seasonId: activeSeason.id,
-          playerId,
-          buyerTeamId: userTeam.id,
-          sellerTeamId: currentRoster?.teamId ?? userTeam.id,
-          fee: releaseClause,
-          status: "ACCEPTED",
-          completedAt: null
-        }
-      });
-      console.log(`[buyout] transfer record created`);
-    } else {
-      console.warn(`[buyout] no active season, transfer record not created`);
+    const duplicatePendingTransfer = await prisma.transfer.findFirst({
+      where: {
+        playerId,
+        buyerTeamId: userTeam.id,
+        status: { in: ACTIVE_TRANSFER_STATUS }
+      },
+      select: { id: true, status: true }
+    });
+
+    if (duplicatePendingTransfer) {
+      return NextResponse.json({
+        success: false,
+        reason: "TRANSFER_ALREADY_NEGOTIATING",
+        message: "Ya existe una negociación activa para este jugador con tu club."
+      }, { status: 409 });
     }
+
+    await prisma.transfer.create({
+      data: {
+        seasonId: activeSeason.id,
+        playerId,
+        buyerTeamId: userTeam.id,
+        sellerTeamId: currentRoster?.teamId ?? userTeam.id,
+        fee: isFreeAgentTransfer ? 0 : releaseClause,
+        status: "CONTRACT_NEGOTIATION_PENDING",
+        completedAt: null
+      }
+    });
+    console.log(`[buyout] transfer record created with status CONTRACT_NEGOTIATION_PENDING`);
 
     if (userId && player) {
       try {
@@ -163,9 +204,12 @@ export async function POST(request: Request) {
     return NextResponse.json({
       success: true,
       requiresContractNegotiation: true,
-      remainingBudget: updatedTeam.budget,
+      remainingBudget: userTeam.budget,
+      committedBudget,
       teamName: userTeam.name,
-      message: "Cláusula abonada. Se ha enviado una notificación a tu sección de correos para iniciar la negociación de contrato."
+      message: isFreeAgentTransfer
+        ? "Se ha abierto la negociación salarial del agente libre sin contactar con ningún club."
+        : "Cláusula abonada. Se ha enviado una notificación a tu sección de correos para iniciar la negociación de contrato."
     });
   } catch (error) {
     console.error("[buyout] ❌ error processing buyout:", error);

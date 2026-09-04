@@ -3,18 +3,91 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: light;
+  --theme-primary: #10b981;
+  --theme-secondary: #0f172a;
+  --theme-league-primary: #059669;
+  --theme-league-secondary: #022c22;
+  --theme-background: #090d16;
+  --theme-surface: #0f172a;
+  --theme-card: #111a2e;
+  --theme-card-alt: #1a243b;
+  --theme-foreground: #f8fafc;
+  --theme-muted: #94a3b8;
+  --theme-muted-soft: rgba(148, 163, 184, 0.12);
+  --theme-border: rgba(51, 65, 85, 0.6);
+  --theme-shadow: rgba(0, 0, 0, 0.6);
+  --theme-on-gradient: #ffffff;
+  --theme-on-gradient-strong: #ffffff;
+  --theme-on-primary: #022c22;
+  --theme-accent: #00FF87;
+  --theme-accent-soft: rgba(0, 255, 135, 0.14);
+  --theme-on-accent: #022c22;
+  color-scheme: dark;
+}
+
+html.dark {
+  --theme-primary: #00FF87;
+  --theme-secondary: #0b1120;
+  --theme-background: #060911;
+  --theme-surface: #0e1626;
+  --theme-card: #111a2e;
+  --theme-card-alt: #1a253d;
+  --theme-foreground: #f8fafc;
+  --theme-muted: #94a3b8;
+  --theme-muted-soft: rgba(148, 163, 184, 0.16);
+  --theme-border: rgba(51, 65, 85, 0.65);
+  --theme-shadow: rgba(0, 0, 0, 0.8);
+  --theme-on-gradient: #ffffff;
+  --theme-on-gradient-strong: #ffffff;
+  --theme-on-primary: #022c22;
+  --theme-accent: #00FF87;
+  --theme-accent-soft: rgba(0, 255, 135, 0.18);
+  --theme-on-accent: #022c22;
 }
 
 body {
   margin: 0;
-  background: #f4f7f5;
-  color: #102a43;
+  background: var(--theme-background);
+  color: var(--theme-foreground);
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+  transition: background-color 180ms ease, color 180ms ease;
+}
+
+* {
+  box-sizing: border-box;
 }
 
 a {
   color: inherit;
   text-decoration: none;
+}
+
+/* Estilo de Tarjetas y Componentes EA FC 26 */
+.card-surface {
+  background: var(--theme-card);
+  border: 1px solid var(--theme-border);
+  box-shadow: 0 10px 30px var(--theme-shadow);
+  backdrop-filter: blur(12px);
+}
+
+.eafc-card {
+  background: linear-gradient(145deg, rgba(17, 26, 46, 0.95) 0%, rgba(10, 15, 26, 0.98) 100%);
+  border: 1px solid rgba(51, 65, 85, 0.7);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+  transition: all 0.2s ease-in-out;
+}
+
+.eafc-card:hover {
+  border-color: rgba(0, 255, 135, 0.4);
+  box-shadow: 0 12px 36px rgba(0, 255, 135, 0.12);
+}
+
+.theme-gradient {
+  background: linear-gradient(135deg, #00FF87 0%, #0284c7 100%);
+}
+
+.theme-competition-gradient {
+  background: linear-gradient(135deg, var(--theme-league-primary) 0%, var(--theme-league-secondary) 100%);
 }
 
 .overall-circle {
@@ -27,18 +100,19 @@ a {
 }
 
 .overall-gold {
-  background: #e5b567;
-  color: #5b3c05;
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+  color: #ffffff;
+  box-shadow: 0 0 12px rgba(245, 158, 11, 0.4);
 }
 
 .overall-silver {
-  background: #cbd5e1;
-  color: #334155;
+  background: linear-gradient(135deg, #94a3b8 0%, #64748b 100%);
+  color: #ffffff;
 }
 
 .overall-bronze {
-  background: #b7794b;
-  color: #fff7ed;
+  background: linear-gradient(135deg, #b45309 0%, #78350f 100%);
+  color: #ffffff;
 }
 
 @keyframes elite-metallic-shine {
@@ -58,8 +132,8 @@ a {
   isolation: isolate;
   overflow: hidden;
   box-shadow:
-    0 0 0 2px rgba(168, 85, 247, 0.6),
-    0 0 16px rgba(234, 179, 8, 0.45),
+    0 0 0 2px rgba(0, 255, 135, 0.7),
+    0 0 16px rgba(0, 255, 135, 0.5),
     inset 0 0 10px rgba(255, 255, 255, 0.85);
 }
 

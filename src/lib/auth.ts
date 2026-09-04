@@ -4,6 +4,19 @@ import Google from "next-auth/providers/google"
 import { PrismaAdapter } from "@auth/prisma-adapter"
 import { prisma } from "@/lib/prisma"
 
+const PROTECTED_ROUTES = [
+  "/dashboard",
+  "/squad",
+  "/calendar",
+  "/lineup",
+  "/transfers",
+  "/competitions",
+] as const;
+
+function isProtectedRoute(pathname: string) {
+  return PROTECTED_ROUTES.some((route) => pathname.startsWith(route));
+}
+
 export const { handlers, auth, signIn, signOut } = NextAuth({
   providers: [Google],
   adapter: PrismaAdapter(prisma),
@@ -14,7 +27,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const existingUser = await prisma.user.findUnique({
           where: { email: user.email! },
         })
-        
+
         if (existingUser) {
           if (!existingUser.googleId) {
             await prisma.user.update({
@@ -30,15 +43,15 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       if (user) {
         token.id = user.id
         token.username = user.username
-        token.avatarUrl = user.avatarUrl
+        token.avatarUrl = user.avatarUrl ?? (user as { image?: string | null }).image ?? null
         token.clubTeamId = user.clubTeamId
         token.nationalTeamId = user.nationalTeamId
       }
       if (trigger === "update" && session) {
-        token.username = session.username ?? token.username
-        token.avatarUrl = session.avatarUrl ?? token.avatarUrl
-        token.clubTeamId = session.clubTeamId ?? token.clubTeamId
-        token.nationalTeamId = session.nationalTeamId ?? token.nationalTeamId
+        if (session.username !== undefined) token.username = session.username
+        if (session.avatarUrl !== undefined) token.avatarUrl = session.avatarUrl
+        if (session.clubTeamId !== undefined) token.clubTeamId = session.clubTeamId
+        if (session.nationalTeamId !== undefined) token.nationalTeamId = session.nationalTeamId
       }
       return token
     },
@@ -51,6 +64,13 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         session.user.nationalTeamId = token.nationalTeamId as string | undefined
       }
       return session
+    },
+    authorized({ request, auth }) {
+      const { pathname } = request.nextUrl;
+      if (isProtectedRoute(pathname)) {
+        return !!auth?.user?.id;
+      }
+      return true;
     },
     async redirect({ url, baseUrl }) {
       if (url.startsWith("/")) return `${baseUrl}${url}`
