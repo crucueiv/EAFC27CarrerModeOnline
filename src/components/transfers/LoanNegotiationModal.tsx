@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { PhoneOff, PhoneCall, Send, AlertTriangle } from "lucide-react";
+import { getManagerAction } from "@/app/api/managers/managers";
+import { calculateLoanWageShare, calculateLoanWageCost } from "@/lib/transfers/loanEngine";
 
 export type LoanDuration = "SHORT_TERM" | "ONE_YEAR" | "TWO_YEARS";
 
@@ -16,6 +18,7 @@ type Props = {
   open: boolean;
   playerName: string;
   sellerTeamName: string;
+  sellerTeamId?: string;
   managerName?: string;
   managerAvatarUrl?: string;
   initialMessage: string;
@@ -25,6 +28,7 @@ type Props = {
     weeks: number;
   };
   totalWageCost: number;
+  weeklyWage?: number;
   loanId: string;
   onClose: () => void;
   onCompleted: () => void;
@@ -36,11 +40,13 @@ export default function LoanNegotiationModal({
   open,
   playerName,
   sellerTeamName,
-  managerName = "Mánager rival",
-  managerAvatarUrl = FALLBACK_AVATAR,
+  sellerTeamId,
+  managerName: initialManagerName,
+  managerAvatarUrl: initialManagerAvatarUrl,
   initialMessage,
   schedule,
   totalWageCost,
+  weeklyWage = 0,
   loanId,
   onClose,
   onCompleted,
@@ -59,11 +65,59 @@ export default function LoanNegotiationModal({
   const [busy, setBusy] = useState(false);
   const [secondsElapsed, setSecondsElapsed] = useState(0);
 
+  // BUG FIX (bug 3): resolver el mánager rival real con la misma estrategia
+  // que ClubNegotiationModal. Antes el modal siempre caía al literal
+  // "Mánager rival" porque no se consultaba el endpoint.
+  const [managerName, setManagerName] = useState<string>(
+    initialManagerName || "Cargando Mánager...",
+  );
+  const [managerAvatar, setManagerAvatar] = useState<string | null>(
+    initialManagerAvatarUrl || null,
+  );
+  const [isLoadingManager, setIsLoadingManager] = useState(false);
+
   useEffect(() => {
     if (!open) return;
     const timer = setInterval(() => setSecondsElapsed((prev) => prev + 1), 1000);
     return () => clearInterval(timer);
   }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setManagerName(initialManagerName || "Cargando Mánager...");
+    setManagerAvatar(initialManagerAvatarUrl || null);
+    setIsLoadingManager(true);
+    if (!sellerTeamId) {
+      setManagerName(
+        initialManagerName || `Cuerpo técnico de ${sellerTeamName}`,
+      );
+      setManagerAvatar(initialManagerAvatarUrl || FALLBACK_AVATAR);
+      setIsLoadingManager(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+    getManagerAction(sellerTeamId)
+      .then((mgr) => {
+        if (cancelled) return;
+        setManagerName(mgr.name);
+        setManagerAvatar(mgr.avatarUrl);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setManagerName(
+          initialManagerName || `Cuerpo técnico de ${sellerTeamName}`,
+        );
+        setManagerAvatar(initialManagerAvatarUrl || FALLBACK_AVATAR);
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingManager(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, sellerTeamId, initialManagerName, initialManagerAvatarUrl, sellerTeamName]);
 
   if (!open) return null;
 
@@ -78,6 +132,14 @@ export default function LoanNegotiationModal({
     if (tension < 75) return "bg-amber-500";
     return "bg-rose-600";
   };
+
+  const currentWeeklyWage = weeklyWage > 0
+    ? weeklyWage
+    : schedule.weeks > 0
+      ? Math.round((totalWageCost / schedule.weeks) / (proposal.wageShareBuyerPct / 100 || 1))
+      : 0;
+  const currentBuyerWeekly = calculateLoanWageShare(currentWeeklyWage, proposal.wageShareBuyerPct);
+  const currentTotalWage = calculateLoanWageCost(currentWeeklyWage, proposal.wageShareBuyerPct, schedule.weeks);
 
   async function send(action: "COUNTER" | "ACCEPT" | "REJECT" | "HANGUP") {
     if (busy) return;
@@ -125,9 +187,11 @@ export default function LoanNegotiationModal({
         <div className="bg-slate-950 p-5 flex flex-col items-center border-b border-slate-800/80 relative">
           <div className="relative mb-3">
             <img
-              src={managerAvatarUrl || FALLBACK_AVATAR}
+              src={managerAvatar || FALLBACK_AVATAR}
               alt={managerName}
-              className="w-20 h-20 rounded-full border-4 border-slate-700 object-cover shadow-lg"
+              className={`w-20 h-20 rounded-full border-4 border-slate-700 object-cover shadow-lg transition-opacity duration-300 ${
+                isLoadingManager ? "opacity-50 animate-pulse" : "opacity-100"
+              }`}
               onError={(e) => {
                 const el = e.currentTarget;
                 if (!el.src.includes("qvbsomljzzcmickbhyad")) {
@@ -250,9 +314,19 @@ export default function LoanNegotiationModal({
             </div>
           )}
 
-          <div className="text-[11px] text-slate-400 font-mono flex justify-between pt-1 border-t border-slate-800">
-            <span>Coste estimado sueldo: <strong>{formatEuro(totalWageCost)}</strong></span>
-            <span>{schedule.weeks} semanas</span>
+          <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-2.5 text-[11px] text-slate-300 space-y-1">
+            <div className="flex items-center justify-between">
+              <span className="text-slate-400">Sueldo semanal jugador:</span>
+              <strong className="font-mono">{formatEuro(currentWeeklyWage)}</strong>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-slate-400">Tú pagas ({proposal.wageShareBuyerPct}%):</span>
+              <strong className="font-mono text-emerald-400">{formatEuro(currentBuyerWeekly)}/sem</strong>
+            </div>
+            <div className="flex items-center justify-between border-t border-slate-800 pt-1.5">
+              <span className="text-slate-400">Coste total cesión ({schedule.weeks} sem):</span>
+              <strong className="font-mono text-white">{formatEuro(currentTotalWage)}</strong>
+            </div>
           </div>
         </div>
 
@@ -296,14 +370,29 @@ export default function LoanNegotiationModal({
 function describeProposal(p: {
   duration?: string;
   wageShareBuyerPct?: number;
+  counterWageShareBuyerPct?: number | null;
   hasBuyOption?: boolean;
   buyOptionPrice?: number | null;
+  counterBuyOptionPrice?: number | null;
 }) {
   const parts: string[] = [];
   if (p.duration) parts.push(durationLabel(p.duration as LoanDuration));
-  if (typeof p.wageShareBuyerPct === "number") parts.push(`Asumo ${p.wageShareBuyerPct}% del sueldo`);
+  if (typeof p.wageShareBuyerPct === "number") {
+    parts.push(`Ofrezco ${p.wageShareBuyerPct}% del sueldo`);
+    if (typeof p.counterWageShareBuyerPct === "number") {
+      parts.push(`(el club pide ${p.counterWageShareBuyerPct}%)`);
+    }
+  }
   if (p.hasBuyOption) {
-    parts.push(`Opción de compra: ${p.buyOptionPrice ? formatEuro(p.buyOptionPrice) : "acordada"}`);
+    parts.push(
+      `Opción de compra: ${
+        p.buyOptionPrice ? formatEuro(p.buyOptionPrice) : "acordada"
+      }${
+        p.counterBuyOptionPrice
+          ? ` (el club pide ${formatEuro(p.counterBuyOptionPrice)})`
+          : ""
+      }`,
+    );
   } else {
     parts.push("Sin opción de compra");
   }

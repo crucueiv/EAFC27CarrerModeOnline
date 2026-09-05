@@ -2,12 +2,28 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { getInboxMessages, markEmailAsRead, type EmailMessage } from "@/lib/inbox/inboxStore";
+import PlayerContractNegotiationModal from "@/components/transfers/PlayerContractNegotiationModal";
+
+type ContractMetadata = {
+  type?: string;
+  playerId?: string;
+  negotiationId?: string;
+  playerName?: string;
+  weeklyWage?: number;
+  contractYears?: number;
+  actionUrl?: string;
+};
 
 export default function InboxModal({ onClose }: { onClose: () => void }) {
   const [emails, setEmails] = useState<EmailMessage[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedEmail, setSelectedEmail] = useState<EmailMessage | null>(null);
-  const [showNegotiationToast, setShowNegotiationToast] = useState(false);
+  const [contractModal, setContractModal] = useState<{
+    open: boolean;
+    playerId: string;
+    playerName: string;
+    negotiationId: string | null;
+  } | null>(null);
 
   const loadEmails = useCallback(async () => {
     setIsLoading(true);
@@ -57,9 +73,12 @@ export default function InboxModal({ onClose }: { onClose: () => void }) {
   const getTypeIcon = (type: string | null) => {
     switch (type) {
       case "CLUB_NEGOTIATION":
+      case "CLUB_NEGOTIATION_AGREED":
         return "🤝";
       case "RELEASE_CLAUSE":
         return "⚠️";
+      case "CONTRACT_SIGNED":
+        return "✅";
       case "MATCH_RESULT":
         return "⚽";
       default:
@@ -70,15 +89,51 @@ export default function InboxModal({ onClose }: { onClose: () => void }) {
   const getTypeColor = (type: string | null) => {
     switch (type) {
       case "CLUB_NEGOTIATION":
+      case "CLUB_NEGOTIATION_AGREED":
         return "bg-emerald-100 text-emerald-700";
       case "RELEASE_CLAUSE":
         return "bg-rose-100 text-rose-700";
+      case "CONTRACT_SIGNED":
+        return "bg-indigo-100 text-indigo-700";
       case "MATCH_RESULT":
         return "bg-blue-100 text-blue-700";
       default:
         return "bg-slate-100 text-slate-700";
     }
   };
+
+  const getTypeLabel = (type: string | null) => {
+    switch (type) {
+      case "CLUB_NEGOTIATION":
+        return "Negociación pendiente";
+      case "CLUB_NEGOTIATION_AGREED":
+        return "Negociación lista para contrato";
+      case "RELEASE_CLAUSE":
+        return "Cláusula de rescisión";
+      case "CONTRACT_SIGNED":
+        return "Contrato firmado";
+      case "MATCH_RESULT":
+        return "Resultado de partido";
+      default:
+        return type ?? "Mensaje";
+    }
+  };
+
+  const openContractNegotiation = (meta: ContractMetadata | null) => {
+    if (!meta?.playerId) return;
+    setContractModal({
+      open: true,
+      playerId: meta.playerId,
+      playerName: meta.playerName ?? "Jugador",
+      negotiationId: meta.negotiationId ?? null,
+    });
+  };
+
+  const selectedMeta = (selectedEmail?.metadata as ContractMetadata | null) ?? null;
+  const canStartContract =
+    selectedMeta?.type === "CLUB_NEGOTIATION_AGREED" ||
+    selectedMeta?.type === "RELEASE_CLAUSE" ||
+    selectedMeta?.type === "CLUB_NEGOTIATION";
 
   return (
     <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/65 p-4 backdrop-blur-sm">
@@ -143,7 +198,7 @@ export default function InboxModal({ onClose }: { onClose: () => void }) {
                         </p>
                         {msg.metadata?.type && (
                           <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[10px] font-medium ${getTypeColor(msg.metadata.type)}`}>
-                            {msg.metadata.type === "CLUB_NEGOTIATION" ? "Negociación" : msg.metadata.type === "RELEASE_CLAUSE" ? "Cláusula" : msg.metadata.type}
+                            {getTypeLabel(msg.metadata.type)}
                           </span>
                         )}
                       </div>
@@ -163,13 +218,13 @@ export default function InboxModal({ onClose }: { onClose: () => void }) {
             {selectedEmail ? (
               <div className="space-y-6">
                 <div>
-                  <div className="flex items-center gap-2 mb-2">
-                    {selectedEmail.metadata?.type && (
-                      <span className={`rounded-full px-2 py-1 text-xs font-medium ${getTypeColor(selectedEmail.metadata.type)}`}>
-                        {getTypeIcon(selectedEmail.metadata.type)} {selectedEmail.metadata.type === "CLUB_NEGOTIATION" ? "Negociación de traspaso" : selectedEmail.metadata.type === "RELEASE_CLAUSE" ? "Cláusula de rescisión" : selectedEmail.metadata.type}
-                      </span>
-                    )}
-                  </div>
+                    <div className="flex items-center gap-2 mb-2">
+                      {selectedEmail.metadata?.type && (
+                        <span className={`rounded-full px-2 py-1 text-xs font-medium ${getTypeColor(selectedEmail.metadata.type)}`}>
+                          {getTypeIcon(selectedEmail.metadata.type)} {getTypeLabel(selectedEmail.metadata.type)}
+                        </span>
+                      )}
+                    </div>
                   <h3 className="text-xl font-extrabold text-slate-900">
                     {selectedEmail.subject}
                   </h3>
@@ -187,10 +242,10 @@ export default function InboxModal({ onClose }: { onClose: () => void }) {
                   {selectedEmail.body}
                 </div>
 
-                {selectedEmail.metadata?.playerName && selectedEmail.metadata.playerName !== "Sistema" && (
+                {canStartContract && selectedMeta?.playerName && selectedMeta.playerName !== "Sistema" && (
                   <div className="border-t border-slate-100 pt-4">
                     <button
-                      onClick={() => setShowNegotiationToast(true)}
+                      onClick={() => openContractNegotiation(selectedMeta)}
                       className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-6 py-3 text-sm font-bold text-white shadow-md hover:bg-emerald-700 active:scale-98 transition"
                     >
                       📝 Iniciar negociaciones de contrato
@@ -207,24 +262,18 @@ export default function InboxModal({ onClose }: { onClose: () => void }) {
         </div>
       </div>
 
-      {showNegotiationToast && (
-        <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl space-y-4 text-center">
-            <div className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-indigo-100 text-indigo-600 text-xl">
-              📋
-            </div>
-            <h4 className="text-lg font-bold text-slate-900">Negociación de Contrato</h4>
-            <p className="text-sm text-slate-600">
-              Próximamente: Sistema interactivo de negociación contractual con el agente del jugador para acordar salario, años de contrato y cláusulas adicionales.
-            </p>
-            <button
-              onClick={() => setShowNegotiationToast(false)}
-              className="mt-2 rounded-xl bg-slate-900 py-2.5 px-6 font-bold text-white hover:bg-slate-800"
-            >
-              Entendido
-            </button>
-          </div>
-        </div>
+      {contractModal?.open && (
+        <PlayerContractNegotiationModal
+          open={contractModal.open}
+          playerId={contractModal.playerId}
+          playerName={contractModal.playerName}
+          negotiationId={contractModal.negotiationId}
+          onClose={() => setContractModal(null)}
+          onSigned={() => {
+            setContractModal(null);
+            loadEmails();
+          }}
+        />
       )}
     </div>
   );

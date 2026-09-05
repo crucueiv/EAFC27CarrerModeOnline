@@ -5,6 +5,7 @@ import { getStandingsForLeague } from "@/lib/competitions";
 import StandingsTable from "@/components/competitions/StandingsTable";
 import BandLegend from "@/components/competitions/BandLegend";
 import CompetitionsClient from "./CompetitionsClient";
+import { PageTitle } from "@/components/providers/PageTitleProvider";
 
 export const dynamic = "force-dynamic";
 
@@ -18,7 +19,15 @@ export default async function CompetitionsPage({
 
   const leagues = await prisma.league.findMany({
     where: { isPlayable: true },
-    include: { _count: { select: { teams: true } } },
+    select: {
+      id: true,
+      name: true,
+      country: true,
+      continent: true,
+      imageUrl: true,
+      eaId: true,
+      _count: { select: { teams: true } },
+    },
     orderBy: [{ continent: "asc" }, { country: "asc" }, { name: "asc" }],
   });
 
@@ -30,6 +39,8 @@ export default async function CompetitionsPage({
     country: l.country,
     continent: l.continent,
     teamCount: l._count.teams,
+    imageUrl: l.imageUrl ?? null,
+    eaId: l.eaId ?? null,
   }));
 
   const requested = options.find((o) => o.id === searchParams.league);
@@ -39,6 +50,7 @@ export default async function CompetitionsPage({
     : null;
 
   return (
+    <PageTitle title="Competiciones">
     <div className="space-y-6">
       <header className="rounded-2xl border border-[var(--theme-border)] bg-[var(--theme-card)] p-6 shadow-sm">
         <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
@@ -81,5 +93,6 @@ export default async function CompetitionsPage({
         </div>
       )}
     </div>
+    </PageTitle>
   );
 }

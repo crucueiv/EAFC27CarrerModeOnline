@@ -4,12 +4,15 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useState,
 } from "react";
-import type { ThemeMode, TeamThemeSeed } from "@/lib/theme/clubTheme";
+import type { TeamThemeSeed } from "@/lib/theme/clubTheme";
 import { resolveThemeSeed } from "@/lib/theme/clubTheme";
+
+type ThemeMode = "dark";
 
 type ThemeValue = {
   mode: ThemeMode;
@@ -17,8 +20,7 @@ type ThemeValue = {
   secondaryColor: string;
   leaguePrimaryColor: string;
   leagueSecondaryColor: string;
-  toggleMode: () => void;
-  setMode: (mode: ThemeMode) => void;
+  mounted: boolean;
 };
 
 const ThemeContext = createContext<ThemeValue | null>(null);
@@ -26,15 +28,7 @@ const ThemeContext = createContext<ThemeValue | null>(null);
 const STORAGE_KEY = "ea-fc-theme-mode";
 
 function getInitialMode(): ThemeMode {
-  if (typeof window === "undefined") return "light";
-  try {
-    const stored = window.localStorage.getItem(STORAGE_KEY);
-    if (stored === "light" || stored === "dark") return stored;
-  } catch {
-    /* ignore */
-  }
-  if (window.matchMedia?.("(prefers-color-scheme: dark)").matches) return "dark";
-  return "light";
+  return "dark";
 }
 
 function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
@@ -62,7 +56,6 @@ function pickOnColor(hex: string): string {
 }
 
 function applyThemeVars(params: {
-  mode: ThemeMode;
   primary: string;
   secondary: string;
   leaguePrimary: string;
@@ -70,49 +63,35 @@ function applyThemeVars(params: {
 }) {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
+
+  // League-tinted tokens (se usan en gradientes de equipo)
   root.style.setProperty("--theme-primary", params.primary);
   root.style.setProperty("--theme-secondary", params.secondary);
   root.style.setProperty("--theme-league-primary", params.leaguePrimary);
   root.style.setProperty("--theme-league-secondary", params.leagueSecondary);
 
-  root.style.setProperty("--theme-background", params.mode === "dark" ? "#020817" : "#f4f7f5");
-  root.style.setProperty("--theme-surface", params.mode === "dark" ? "#0f172a" : "#ffffff");
-  root.style.setProperty("--theme-card", params.mode === "dark" ? "#111827" : "#ffffff");
-  root.style.setProperty("--theme-card-alt", params.mode === "dark" ? "#1e293b" : "#f1f5f9");
-  root.style.setProperty("--theme-foreground", params.mode === "dark" ? "#e2e8f0" : "#102a43");
-  root.style.setProperty("--theme-muted", params.mode === "dark" ? "#94a3b8" : "#475569");
-  root.style.setProperty(
-    "--theme-muted-soft",
-    params.mode === "dark" ? "rgba(148, 163, 184, 0.18)" : "rgba(15, 23, 42, 0.08)"
-  );
-  root.style.setProperty(
-    "--theme-border",
-    params.mode === "dark" ? "rgba(148, 163, 184, 0.21)" : "rgba(15, 23, 42, 0.08)"
-  );
-  root.style.setProperty(
-    "--theme-shadow",
-    params.mode === "dark" ? "rgba(15, 23, 42, 0.7)" : "rgba(15, 23, 42, 0.08)"
-  );
-  root.style.setProperty(
-    "--theme-on-accent",
-    params.mode === "dark" ? "#022c22" : "#ffffff"
-  );
-  root.style.setProperty(
-    "--theme-accent",
-    params.mode === "dark" ? "#4ade80" : "#16a34a"
-  );
-  root.style.setProperty(
-    "--theme-accent-soft",
-    params.mode === "dark" ? "rgba(74, 222, 128, 0.16)" : "rgba(22, 163, 74, 0.12)"
-  );
+  // Forzar siempre la paleta gaming dark, independientemente del club.
+  // Esto preserva la coherencia visual pedida en el brief.
+  root.style.setProperty("--theme-background", "#17151F");
+  root.style.setProperty("--theme-surface", "#191820");
+  root.style.setProperty("--theme-card", "rgba(46, 47, 59, 0.85)");
+  root.style.setProperty("--theme-card-alt", "rgba(45, 53, 64, 0.85)");
+  root.style.setProperty("--theme-foreground", "#FCFCFC");
+  root.style.setProperty("--theme-muted", "#9BA1AC");
+  root.style.setProperty("--theme-muted-soft", "rgba(155, 161, 172, 0.12)");
+  root.style.setProperty("--theme-border", "rgba(255, 255, 255, 0.08)");
+  root.style.setProperty("--theme-shadow", "rgba(0, 0, 0, 0.55)");
+  root.style.setProperty("--theme-on-accent", "#001016");
+  root.style.setProperty("--theme-accent", "#00E5FF");
+  root.style.setProperty("--theme-accent-soft", "rgba(0, 229, 255, 0.16)");
 
   const onPrimary = pickOnColor(params.primary);
   root.style.setProperty("--theme-on-gradient", onPrimary);
   root.style.setProperty("--theme-on-gradient-strong", onPrimary);
   root.style.setProperty("--theme-on-primary", onPrimary);
 
-  root.style.setProperty("color-scheme", params.mode === "dark" ? "dark" : "light");
-  root.classList.toggle("dark", params.mode === "dark");
+  root.style.setProperty("color-scheme", "dark");
+  root.classList.add("dark");
 }
 
 export function useTheme() {
@@ -131,7 +110,8 @@ export default function ThemeProvider({
   children: React.ReactNode;
 }) {
   const resolved = resolveThemeSeed(initialTheme);
-  const [mode, setMode] = useState<ThemeMode>(getInitialMode);
+  const [mode] = useState<ThemeMode>("dark");
+  const [mounted, setMounted] = useState(false);
   const [primaryColor, setPrimaryColor] = useState(resolved.primaryColor);
   const [secondaryColor, setSecondaryColor] = useState(resolved.secondaryColor);
   const [leaguePrimaryColor, setLeaguePrimaryColor] = useState(resolved.leaguePrimaryColor);
@@ -139,20 +119,24 @@ export default function ThemeProvider({
     resolved.leagueSecondaryColor
   );
 
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   useLayoutEffect(() => {
+    if (!mounted) return;
     applyThemeVars({
-      mode,
       primary: primaryColor,
       secondary: secondaryColor,
       leaguePrimary: leaguePrimaryColor,
       leagueSecondary: leagueSecondaryColor,
     });
     try {
-      window.localStorage.setItem(STORAGE_KEY, mode);
+      window.localStorage.setItem(STORAGE_KEY, "dark");
     } catch {
       /* ignore */
     }
-  }, [mode, primaryColor, secondaryColor, leaguePrimaryColor, leagueSecondaryColor]);
+  }, [primaryColor, secondaryColor, leaguePrimaryColor, leagueSecondaryColor, mounted]);
 
   useLayoutEffect(() => {
     setPrimaryColor(resolved.primaryColor);
@@ -166,10 +150,6 @@ export default function ThemeProvider({
     resolved.leagueSecondaryColor,
   ]);
 
-  const toggleMode = useCallback(() => {
-    setMode((current) => (current === "dark" ? "light" : "dark"));
-  }, []);
-
   const value = useMemo<ThemeValue>(
     () => ({
       mode,
@@ -177,8 +157,7 @@ export default function ThemeProvider({
       secondaryColor,
       leaguePrimaryColor,
       leagueSecondaryColor,
-      toggleMode,
-      setMode,
+      mounted,
     }),
     [
       mode,
@@ -186,7 +165,7 @@ export default function ThemeProvider({
       secondaryColor,
       leaguePrimaryColor,
       leagueSecondaryColor,
-      toggleMode,
+      mounted,
     ]
   );
 

@@ -47,13 +47,6 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const yearParam = url.searchParams.get("year");
   const monthParam = url.searchParams.get("month");
-  const now = new Date();
-  const year = yearParam ? Number(yearParam) : now.getUTCFullYear();
-  const month = monthParam ? Number(monthParam) : now.getUTCMonth() + 1;
-
-  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
-    return NextResponse.json({ error: "Parámetros inválidos" }, { status: 400 });
-  }
 
   const user = await prisma.user.findUnique({
     where: { id: session.user.id },
@@ -91,6 +84,24 @@ export async function GET(req: Request) {
   if (!season) {
     return NextResponse.json(empty satisfies CalendarMonthResponse);
   }
+
+  const calendarForDefault = await prisma.teamCalendarState.findUnique({
+    where: { teamId_seasonId: { teamId: user.clubTeam.id, seasonId: season.id } },
+    select: { currentDate: true },
+  });
+
+  const now = new Date();
+  const defaultDate =
+    calendarForDefault?.currentDate ?? season.startDate ?? now;
+  const defaultYear = yearParam ? Number(yearParam) : defaultDate.getUTCFullYear();
+  const defaultMonth = monthParam ? Number(monthParam) : defaultDate.getUTCMonth() + 1;
+
+  if (!Number.isInteger(defaultYear) || !Number.isInteger(defaultMonth) || defaultMonth < 1 || defaultMonth > 12) {
+    return NextResponse.json({ error: "Parámetros inválidos" }, { status: 400 });
+  }
+
+  const year = defaultYear;
+  const month = defaultMonth;
 
   const monthStart = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0));
   const monthEnd = new Date(Date.UTC(year, month, 1, 0, 0, 0));

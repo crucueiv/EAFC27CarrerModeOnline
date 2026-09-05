@@ -1,9 +1,9 @@
-import { randomBytes } from "crypto";
 import type { PrismaClient } from "@prisma/client";
 import { utcMidnight } from "@/domain/calendar/utcDate";
 import { seedTransferWindows } from "./seedTransferWindows";
 import { ensureCalendarState } from "./advanceService";
 import { withSerializableTransaction } from "./calendarDb";
+import { getSingletonCareerGroupId } from "@/lib/careerGroup";
 
 export const SEASON_26_27_START = utcMidnight(2026, 7, 5);
 export const SEASON_26_27_END = utcMidnight(2027, 6, 30);
@@ -41,19 +41,16 @@ export async function ensureCareerGroupSeason2627(
     throw new Error(`Team ${args.teamId} has no league`);
   }
 
+  const singletonId = await getSingletonCareerGroupId();
   let careerGroupId = team.league.careerGroupId;
 
-  if (!careerGroupId) {
-    const group = await prisma.careerGroup.create({
-      data: {
-        name: "Carrera online",
-        inviteCode: `auto-${randomBytes(8).toString("hex")}`,
-      },
-    });
-    careerGroupId = group.id;
+  if (careerGroupId !== singletonId) {
+    if (!careerGroupId) {
+      careerGroupId = singletonId;
+    }
     await prisma.league.update({
       where: { id: team.league.id },
-      data: { careerGroupId },
+      data: { careerGroupId: singletonId },
     });
   }
 

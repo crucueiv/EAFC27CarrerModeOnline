@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { isAdminEmail } from "@/lib/admin";
 import { prisma } from "@/lib/prisma";
 import AdminPanel from "@/components/admin/AdminPanel";
+import { PageTitle } from "@/components/providers/PageTitleProvider";
 
 export const dynamic = "force-dynamic";
 
@@ -79,6 +80,7 @@ export default async function AdminPage() {
   };
 
   return (
+    <PageTitle title="Panel de control">
     <div className="space-y-6">
       <header className="rounded-2xl border border-[var(--theme-border)] bg-[var(--theme-card)] p-6 shadow-sm">
         <p className="text-xs font-bold uppercase tracking-[0.2em] text-[var(--theme-muted)]">Administración</p>
@@ -89,5 +91,6 @@ export default async function AdminPage() {
       </header>
       <AdminPanel initialState={initialState} />
     </div>
+    </PageTitle>
   );
 }

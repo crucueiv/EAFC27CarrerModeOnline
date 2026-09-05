@@ -59,27 +59,6 @@ export async function processPendingNegotiations(
         const seller = await tx.team.findUnique({ where: { id: fresh.sellerTeamId }, select: { budget: true } });
         if (!buyer || !seller) throw new Error("Teams not found");
 
-        const roster = await tx.roster.findFirst({
-          where: { playerId: fresh.playerId, isActive: true, seasonId: fresh.seasonId },
-          select: { id: true },
-        });
-        if (roster) {
-          await tx.roster.update({
-            where: { id: roster.id },
-            data: { teamId: fresh.buyerTeamId, isActive: true },
-          });
-        } else {
-          await tx.roster.create({
-            data: {
-              teamId: fresh.buyerTeamId,
-              playerId: fresh.playerId,
-              seasonId: fresh.seasonId,
-              isActive: true,
-              role: "ROTACION",
-            },
-          });
-        }
-
         if (fresh.type === "PERMANENT") {
           await tx.transfer.create({
             data: {
@@ -88,8 +67,8 @@ export async function processPendingNegotiations(
               sellerTeamId: fresh.sellerTeamId,
               buyerTeamId: fresh.buyerTeamId,
               fee: Math.round(fresh.agreedPrice),
-              status: "COMPLETED",
-              completedAt: simulatedNow,
+              status: "WAITING_PLAYER_CONTRACT",
+              completedAt: null,
               negotiationId: fresh.id,
             },
           });
@@ -116,10 +95,10 @@ export async function processPendingNegotiations(
               wageShareBuyerPct: 50,
               hasBuyOption: false,
               fee: Math.round(fresh.agreedPrice),
-              status: "COMPLETED",
+              status: "WAITING_PLAYER_CONTRACT",
               startsAt,
               endsAt,
-              completedAt: simulatedNow,
+              completedAt: null,
               negotiationId: fresh.id,
             },
           });
@@ -127,7 +106,7 @@ export async function processPendingNegotiations(
 
         await tx.negotiation.update({
           where: { id: fresh.id },
-          data: { status: "COMPLETED", decidedAt: simulatedNow },
+          data: { status: "AGREED_CLUB", decidedAt: simulatedNow, effectiveDate: simulatedNow },
         });
       });
       processed += 1;

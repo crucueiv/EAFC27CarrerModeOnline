@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { TransferPlayerResult } from "@/lib/transfers/search";
 import PlayerDetailModal from "@/components/transfers/PlayerDetailModal";
 import LoanNegotiationModal from "@/components/transfers/LoanNegotiationModal";
@@ -30,7 +30,7 @@ function formatCurrency(value: number) {
   return formatPrice(value);
 }
 
-export default function PlayerCardRow({ player }: { player: TransferPlayerResult }) {
+export default function PlayerCardRow({ player, ownClubTeamId }: { player: TransferPlayerResult; ownClubTeamId?: string | null }) {
   const [avatarFailed, setAvatarFailed] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isLoanModalOpen, setIsLoanModalOpen] = useState(false);
@@ -39,15 +39,49 @@ export default function PlayerCardRow({ player }: { player: TransferPlayerResult
     greeting: string;
     schedule: { startsAt: string; endsAt: string; weeks: number };
     totalWageCost: number;
+    weeklyWage: number;
+    buyerWeeklyWageCost: number;
   } | null>(null);
   const [loanBusy, setLoanBusy] = useState(false);
   const [loanError, setLoanError] = useState<string | null>(null);
+  const [activeLoanId, setActiveLoanId] = useState<string | null>(null);
+
+  const isOwnPlayer = Boolean(
+    ownClubTeamId && player.currentTeam?.id === ownClubTeamId,
+  );
+
+  // BUG FIX (bug 1): si ya existe una cesión activa para este jugador
+  // (estado PROPOSED/COUNTERED/ACCEPTED/COMPLETED), deshabilitamos el botón
+  // de proponer cesión para impedir abrir una segunda negociación en paralelo.
+  useEffect(() => {
+    let cancelled = false;
+    if (!player.id) return;
+    const params = new URLSearchParams({ playerId: player.id });
+    fetch(`/api/loans/active?${params.toString()}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { hasActiveForPlayer?: boolean; playerLoanId?: string | null } | null) => {
+        if (cancelled) return;
+        if (data?.hasActiveForPlayer) {
+          setActiveLoanId(data.playerLoanId ?? null);
+        }
+      })
+      .catch(() => {
+        /* ignore */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [player.id]);
 
   const avatar = player.avatarUrl || (player.eaId
     ? `https://ratings-images-prod.pulse.ea.com/FC25/full/player-portraits/p${player.eaId}.png`
     : "/player-placeholder.svg");
 
   async function startLoanProposal() {
+    if (activeLoanId) {
+      setLoanError("Ya tienes una cesión activa para este jugador. Revisa tu Sección de Correos.");
+      return;
+    }
     setLoanBusy(true);
     setLoanError(null);
     try {
@@ -63,6 +97,11 @@ export default function PlayerCardRow({ player }: { player: TransferPlayerResult
         }),
       });
       const data = await res.json();
+      if (data.error === "loan-already-active") {
+        setActiveLoanId(data.loanId ?? null);
+        setLoanError(data.reason || "Ya tienes una cesión activa para este jugador.");
+        return;
+      }
       if (data.error) {
         setLoanError(data.error);
       } else {
@@ -71,6 +110,8 @@ export default function PlayerCardRow({ player }: { player: TransferPlayerResult
           greeting: data.greeting,
           schedule: data.schedule,
           totalWageCost: data.totalWageCost,
+          weeklyWage: data.weeklyWage ?? 0,
+          buyerWeeklyWageCost: data.buyerWeeklyWageCost ?? 0,
         });
         setIsLoanModalOpen(true);
       }
@@ -148,9 +189,17 @@ export default function PlayerCardRow({ player }: { player: TransferPlayerResult
           </div>
         </div>
         <div className="text-right text-xs text-[var(--theme-muted)]">
-          <span>Potencial</span>
-          <strong className="ml-2 text-sm text-[var(--theme-foreground)]">{player.potential}</strong>
-          {player.isLoanEligible && (
+          {isOwnPlayer ? (
+            <span className="inline-flex items-center gap-1 rounded bg-indigo-100 px-2 py-1 text-[10px] font-bold uppercase text-indigo-800">
+              Tu jugador
+            </span>
+          ) : (
+            <>
+              <span>Potencial</span>
+              <strong className="ml-2 text-sm text-[var(--theme-foreground)]">{player.potential}</strong>
+            </>
+          )}
+          {player.isLoanEligible && !isOwnPlayer && (
             <div className="mt-2">
               <button
                 type="button"
@@ -158,10 +207,14 @@ export default function PlayerCardRow({ player }: { player: TransferPlayerResult
                   e.stopPropagation();
                   startLoanProposal();
                 }}
-                disabled={loanBusy}
+                disabled={loanBusy || Boolean(activeLoanId) || isOwnPlayer}
                 className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-bold text-white hover:opacity-90 disabled:opacity-50"
               >
-                {loanBusy ? "Proponiendo..." : "Proponer cesión"}
+                {activeLoanId
+                  ? "Cesión en curso"
+                  : loanBusy
+                    ? "Proponiendo..."
+                    : "Proponer cesión"}
               </button>
               {loanError && (
                 <div className="mt-1 max-w-[10rem] text-[10px] text-rose-700">
@@ -185,9 +238,11 @@ export default function PlayerCardRow({ player }: { player: TransferPlayerResult
           open={isLoanModalOpen}
           playerName={player.name}
           sellerTeamName={player.currentTeam.name}
+          sellerTeamId={player.currentTeam.id}
           initialMessage={loanInit.greeting}
           schedule={loanInit.schedule}
           totalWageCost={loanInit.totalWageCost}
+          weeklyWage={loanInit.weeklyWage}
           loanId={loanInit.loanId}
           onClose={() => setIsLoanModalOpen(false)}
           onCompleted={() => {

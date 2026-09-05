@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { FORMATIONS_BY_ID } from "@/lib/constants/formations";
 import LineupPageClient from "./LineupPageClient";
+import { PageTitle } from "@/components/providers/PageTitleProvider";
 
 export const dynamic = "force-dynamic";
 
@@ -83,20 +84,22 @@ export default async function LineupPage() {
   }));
 
   return (
-    <LineupPageClient
-      team={{
-        id: team.id,
-        name: team.name,
-        shortName: team.shortName,
-        imageUrl: team.imageUrl,
-        primaryColor: team.primaryColor,
-        secondaryColor: team.secondaryColor,
-      }}
-      initialFormationId={initialFormationId}
-      initialSlots={initialSlots}
-      initialBench={initialBench}
-      roster={roster}
-      variants={variantsSerialized}
-    />
+    <PageTitle title="Alineación">
+      <LineupPageClient
+        team={{
+          id: team.id,
+          name: team.name,
+          shortName: team.shortName,
+          imageUrl: team.imageUrl,
+          primaryColor: team.primaryColor,
+          secondaryColor: team.secondaryColor,
+        }}
+        initialFormationId={initialFormationId}
+        initialSlots={initialSlots}
+        initialBench={initialBench}
+        roster={roster}
+        variants={variantsSerialized}
+      />
+    </PageTitle>
   );
 }

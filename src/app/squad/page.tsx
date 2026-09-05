@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { translatePosition } from "@/lib/constants/position-translation";
 import PlayerOverallBadge from "@/components/players/PlayerOverallBadge";
+import { PageTitle } from "@/components/providers/PageTitleProvider";
 
 const POSITION_GROUPS = [
   { label: "Portero", positions: ["POR"] },
@@ -68,6 +69,7 @@ export default async function SquadPage() {
   });
 
   return (
+    <PageTitle title="Plantilla">
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
@@ -152,5 +154,6 @@ export default async function SquadPage() {
         </div>
       )}
     </div>
+    </PageTitle>
   );
 }

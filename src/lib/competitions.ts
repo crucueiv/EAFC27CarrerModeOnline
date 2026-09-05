@@ -77,7 +77,7 @@ const lowerDivisionKeywords = [
   "superliga",
 ];
 
-function getLeagueLogoUrl(league: { eaId: string | null; imageUrl: string | null }) {
+export function getLeagueLogoUrl(league: { eaId: string | null; imageUrl: string | null }) {
   if (league.eaId) {
     return `https://assets.easysbc.io/fc26/leagues/${league.eaId}.png`;
   }
@@ -395,22 +395,8 @@ function applyZones(
   });
 }
 
-async function getActiveSeason(userId?: string): Promise<{ id: string } | null> {
+async function getActiveSeason(): Promise<{ id: string } | null> {
   if (!prisma) return null;
-  if (userId) {
-    const membership = await prisma.careerGroupMember.findFirst({
-      where: { userId },
-      select: { careerGroupId: true },
-    });
-    if (membership?.careerGroupId) {
-      const season = await prisma.season.findFirst({
-        where: { status: "ACTIVE", careerGroupId: membership.careerGroupId },
-        orderBy: { startDate: "desc" },
-        select: { id: true },
-      });
-      if (season) return season;
-    }
-  }
   return prisma.season.findFirst({
     where: { status: "ACTIVE" },
     orderBy: { startDate: "desc" },
@@ -464,7 +450,7 @@ export async function getStandingsForLeague(
   if (!league) return null;
   if (league._count.teams < 2) return null;
 
-  const season = await getActiveSeason(userId);
+  const season = await getActiveSeason();
   const points = await getActiveSeasonPoints();
   const [teamList, matches] = await Promise.all([
     prisma.team.findMany({
@@ -599,7 +585,7 @@ export async function getCompetitionsData(userId?: string): Promise<CompetitionL
   clearContinentSpotsCache();
 
   const points = await getActiveSeasonPoints();
-  const season = await getActiveSeason(userId);
+  const season = await getActiveSeason();
   const leagues = await prisma.league.findMany({
     include: { _count: { select: { teams: true } } },
     orderBy: [{ continent: "asc" }, { name: "asc" }],

@@ -9,7 +9,16 @@ type LeagueOption = {
   country: string;
   continent: string;
   teamCount: number;
+  imageUrl: string | null;
+  eaId: string | null;
 };
+
+function leagueLogoUrl(league: { eaId: string | null; imageUrl: string | null }) {
+  if (league.eaId) {
+    return `https://assets.easysbc.io/fc26/leagues/${league.eaId}.png`;
+  }
+  return league.imageUrl;
+}
 
 export default function CompetitionsClient({
   leagues,
@@ -213,29 +222,40 @@ export default function CompetitionsClient({
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {filteredLeagues.map((l) => (
-                <button
-                  key={l.id}
-                  onClick={() => handleLeagueSelect(l.id)}
-                  className={`group flex items-center gap-4 rounded-2xl border-2 p-4 text-left transition-all ${
-                    initialLeagueId === l.id
-                      ? "border-emerald-500 bg-emerald-950/40 text-white ring-2 ring-emerald-500/30"
-                      : "border-slate-800 bg-slate-900/60 hover:border-emerald-500/60 hover:bg-slate-800/80"
-                  }`}
-                >
-                  <div className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-slate-800 font-bold text-emerald-400 text-lg">
-                    ⚽
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate font-bold text-white text-base group-hover:text-emerald-400 transition">
-                      {l.name}
+              {filteredLeagues.map((l) => {
+                const logoUrl = leagueLogoUrl(l);
+                return (
+                  <button
+                    key={l.id}
+                    onClick={() => handleLeagueSelect(l.id)}
+                    className={`group flex items-center gap-4 rounded-2xl border-2 p-4 text-left transition-all ${
+                      initialLeagueId === l.id
+                        ? "border-emerald-500 bg-emerald-950/40 text-white ring-2 ring-emerald-500/30"
+                        : "border-slate-800 bg-slate-900/60 hover:border-emerald-500/60 hover:bg-slate-800/80"
+                    }`}
+                  >
+                    {logoUrl ? (
+                      <img
+                        src={logoUrl}
+                        alt=""
+                        className="h-12 w-12 shrink-0 rounded-xl object-contain bg-slate-800"
+                      />
+                    ) : (
+                      <div className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-slate-800 font-bold text-emerald-400 text-lg">
+                        ⚽
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate font-bold text-white text-base group-hover:text-emerald-400 transition">
+                        {l.name}
+                      </div>
+                      <div className="text-xs text-slate-400 mt-0.5">
+                        {l.teamCount} equipos compitiendo
+                      </div>
                     </div>
-                    <div className="text-xs text-slate-400 mt-0.5">
-                      {l.teamCount} equipos compitiendo
-                    </div>
-                  </div>
-                </button>
-              ))}
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>

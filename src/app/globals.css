@@ -2,59 +2,69 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ============================================================
+   PALETA GAMING DARK — tokens semánticos
+   Se reusan los nombres --theme-* existentes para que los
+   ~100+ usos en el código cambien automáticamente.
+   ============================================================ */
 :root {
-  --theme-primary: #10b981;
-  --theme-secondary: #0f172a;
-  --theme-league-primary: #059669;
-  --theme-league-secondary: #022c22;
-  --theme-background: #090d16;
-  --theme-surface: #0f172a;
-  --theme-card: #111a2e;
-  --theme-card-alt: #1a243b;
-  --theme-foreground: #f8fafc;
-  --theme-muted: #94a3b8;
-  --theme-muted-soft: rgba(148, 163, 184, 0.12);
-  --theme-border: rgba(51, 65, 85, 0.6);
-  --theme-shadow: rgba(0, 0, 0, 0.6);
+  --bg-base: #17151F;
+  --bg-surface: #191820;
+  --bg-card: rgba(46, 47, 59, 0.85);
+  --bg-card-alt: rgba(45, 53, 64, 0.85);
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --text-primary: #FCFCFC;
+  --text-secondary: #9BA1AC;
+  --accent-cyan: #00E5FF;
+  --accent-green: #2BCC77;
+  --accent-cyan-soft: rgba(0, 229, 255, 0.16);
+  --accent-green-soft: rgba(43, 204, 119, 0.18);
+
+  /* Mapeo a tokens legacy (ThemeProvider / componentes existentes) */
+  --theme-primary: #FCFCFC;
+  --theme-secondary: #191820;
+  --theme-league-primary: #00E5FF;
+  --theme-league-secondary: #2BCC77;
+  --theme-background: var(--bg-base);
+  --theme-surface: var(--bg-surface);
+  --theme-card: var(--bg-card);
+  --theme-card-alt: var(--bg-card-alt);
+  --theme-foreground: var(--text-primary);
+  --theme-muted: var(--text-secondary);
+  --theme-muted-soft: rgba(155, 161, 172, 0.12);
+  --theme-border: var(--border-subtle);
+  --theme-shadow: rgba(0, 0, 0, 0.55);
   --theme-on-gradient: #ffffff;
   --theme-on-gradient-strong: #ffffff;
-  --theme-on-primary: #022c22;
-  --theme-accent: #00FF87;
-  --theme-accent-soft: rgba(0, 255, 135, 0.14);
-  --theme-on-accent: #022c22;
+  --theme-on-primary: #0b0b10;
+  --theme-accent: var(--accent-cyan);
+  --theme-accent-soft: var(--accent-cyan-soft);
+  --theme-on-accent: #001016;
+  --theme-positive: var(--accent-green);
+  --theme-positive-soft: var(--accent-green-soft);
+  --theme-on-positive: #001a0c;
+
   color-scheme: dark;
 }
 
 html.dark {
-  --theme-primary: #00FF87;
-  --theme-secondary: #0b1120;
-  --theme-background: #060911;
-  --theme-surface: #0e1626;
-  --theme-card: #111a2e;
-  --theme-card-alt: #1a253d;
-  --theme-foreground: #f8fafc;
-  --theme-muted: #94a3b8;
-  --theme-muted-soft: rgba(148, 163, 184, 0.16);
-  --theme-border: rgba(51, 65, 85, 0.65);
-  --theme-shadow: rgba(0, 0, 0, 0.8);
-  --theme-on-gradient: #ffffff;
-  --theme-on-gradient-strong: #ffffff;
-  --theme-on-primary: #022c22;
-  --theme-accent: #00FF87;
-  --theme-accent-soft: rgba(0, 255, 135, 0.18);
-  --theme-on-accent: #022c22;
-}
-
-body {
-  margin: 0;
-  background: var(--theme-background);
-  color: var(--theme-foreground);
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
-  transition: background-color 180ms ease, color 180ms ease;
+  color-scheme: dark;
 }
 
 * {
   box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-body, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 a {
@@ -62,34 +72,184 @@ a {
   text-decoration: none;
 }
 
-/* Estilo de Tarjetas y Componentes EA FC 26 */
+/* Tipografía display para títulos */
+.font-display {
+  font-family: var(--font-display, "Barlow Condensed", "Oswald", system-ui, sans-serif);
+  letter-spacing: 0.01em;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-display, "Barlow Condensed", "Oswald", system-ui, sans-serif);
+  color: var(--text-primary);
+  letter-spacing: 0.01em;
+}
+
+/* ============================================================
+   AURORA MESH GRADIENT — sólo detrás del contenido
+   ============================================================ */
+.aurora-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  background: var(--bg-base);
+}
+
+.aurora-bg::before,
+.aurora-bg::after {
+  content: "";
+  position: absolute;
+  width: 60vw;
+  height: 60vw;
+  border-radius: 50%;
+  filter: blur(140px);
+  opacity: 0.55;
+  will-change: transform;
+}
+
+.aurora-bg::before {
+  background: radial-gradient(circle at center, #2A2F5C 0%, #20203C 60%, transparent 75%);
+  top: -15vw;
+  left: -10vw;
+}
+
+.aurora-bg::after {
+  background: radial-gradient(circle at center, #1f5e63 0%, #0d3a45 55%, transparent 75%);
+  bottom: -20vw;
+  right: -15vw;
+  opacity: 0.45;
+}
+
+.aurora-bg > .aurora-orb {
+  position: absolute;
+  width: 45vw;
+  height: 45vw;
+  border-radius: 50%;
+  filter: blur(160px);
+  opacity: 0.35;
+  background: radial-gradient(circle at center, #3b2f6a 0%, transparent 70%);
+  top: 30%;
+  left: 40%;
+}
+
+/* ============================================================
+   TARJETAS BENTO
+   ============================================================ */
+.bento-card {
+  position: relative;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 16px;
+  padding: 28px;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  transition: border-color 180ms ease, transform 180ms ease, box-shadow 180ms ease;
+}
+
+.bento-card:hover {
+  border-color: rgba(0, 229, 255, 0.22);
+}
+
+.bento-card-alt {
+  background: var(--bg-card-alt);
+  border-color: rgba(0, 229, 255, 0.18);
+}
+
+.bento-card-flat {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 16px;
+  padding: 28px;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
 .card-surface {
-  background: var(--theme-card);
-  border: 1px solid var(--theme-border);
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
   box-shadow: 0 10px 30px var(--theme-shadow);
-  backdrop-filter: blur(12px);
+  backdrop-filter: blur(14px);
+  border-radius: 16px;
 }
 
 .eafc-card {
-  background: linear-gradient(145deg, rgba(17, 26, 46, 0.95) 0%, rgba(10, 15, 26, 0.98) 100%);
-  border: 1px solid rgba(51, 65, 85, 0.7);
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 16px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
-  transition: all 0.2s ease-in-out;
+  transition: border-color 200ms ease, box-shadow 200ms ease;
+  backdrop-filter: blur(14px);
 }
 
 .eafc-card:hover {
-  border-color: rgba(0, 255, 135, 0.4);
-  box-shadow: 0 12px 36px rgba(0, 255, 135, 0.12);
+  border-color: rgba(43, 204, 119, 0.35);
+  box-shadow: 0 12px 36px rgba(43, 204, 119, 0.12);
 }
 
+/* ============================================================
+   STAT CLUSTER (icono + número compacto)
+   ============================================================ */
+.stat-cluster {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-subtle);
+}
+
+.stat-cluster .stat-value {
+  font-family: var(--font-display, "Barlow Condensed", sans-serif);
+  font-weight: 800;
+  font-size: 1.05rem;
+  color: var(--text-primary);
+  letter-spacing: 0.02em;
+}
+
+.stat-cluster .stat-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-secondary);
+}
+
+/* ============================================================
+   DOT INDICATORS (para rotadores sin flechas)
+   ============================================================ */
+.dot-indicator {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.18);
+  transition: background 180ms ease, width 180ms ease;
+}
+
+.dot-indicator.active {
+  background: var(--accent-cyan);
+  width: 18px;
+}
+
+/* ============================================================
+   GRADIENTES TEMÁTICOS (uso restringido)
+   ============================================================ */
 .theme-gradient {
-  background: linear-gradient(135deg, #00FF87 0%, #0284c7 100%);
+  background: linear-gradient(135deg, var(--accent-cyan) 0%, var(--accent-green) 100%);
 }
 
 .theme-competition-gradient {
   background: linear-gradient(135deg, var(--theme-league-primary) 0%, var(--theme-league-secondary) 100%);
 }
 
+/* ============================================================
+   OVERALL BADGES (mantener — se usan en squad/cards)
+   ============================================================ */
 .overall-circle {
   display: grid;
   height: 2.75rem;
@@ -106,7 +266,7 @@ a {
 }
 
 .overall-silver {
-  background: linear-gradient(135deg, #94a3b8 0%, #64748b 100%);
+  background: linear-gradient(135deg, #94a3b8 0%, #647488 100%);
   color: #ffffff;
 }
 
@@ -132,8 +292,8 @@ a {
   isolation: isolate;
   overflow: hidden;
   box-shadow:
-    0 0 0 2px rgba(0, 255, 135, 0.7),
-    0 0 16px rgba(0, 255, 135, 0.5),
+    0 0 0 2px rgba(0, 229, 255, 0.7),
+    0 0 16px rgba(0, 229, 255, 0.5),
     inset 0 0 10px rgba(255, 255, 255, 0.85);
 }
 
@@ -174,10 +334,110 @@ a {
   font-weight: 900 !important;
 }
 
+/* ============================================================
+   BOTONES / CHIPS reutilizables
+   ============================================================ */
+.btn-primary-gaming {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 18px;
+  border-radius: 12px;
+  font-weight: 700;
+  font-family: var(--font-display, "Barlow Condensed", sans-serif);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-size: 0.85rem;
+  color: #001016;
+  background: var(--accent-cyan);
+  border: 1px solid var(--accent-cyan);
+  transition: filter 180ms ease, transform 180ms ease;
+}
+
+.btn-primary-gaming:hover {
+  filter: brightness(1.1);
+}
+
+.btn-ghost-gaming {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 18px;
+  border-radius: 12px;
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-subtle);
+  transition: background 180ms ease, border-color 180ms ease;
+}
+
+.btn-ghost-gaming:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(0, 229, 255, 0.25);
+}
+
+/* Estados de partido (resultado) */
+.result-chip {
+  display: inline-flex;
+  height: 26px;
+  min-width: 26px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+}
+
+.result-win {
+  color: var(--accent-green);
+  background: var(--accent-green-soft);
+}
+
+.result-draw {
+  color: #f5c451;
+  background: rgba(245, 196, 81, 0.15);
+}
+
+.result-loss {
+  color: #ff6b8a;
+  background: rgba(255, 107, 138, 0.15);
+}
+
+.result-pending {
+  color: var(--text-secondary);
+  background: var(--bg-card-alt);
+}
+
+/* Scrollbar discreto */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 229, 255, 0.25);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .elite-rating-ring::after {
     animation: none;
     opacity: 0.3;
     transform: translate(0, 0) rotate(25deg);
+  }
+  .bento-card,
+  .eafc-card,
+  .btn-primary-gaming,
+  .btn-ghost-gaming {
+    transition: none;
   }
 }

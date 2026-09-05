@@ -28,16 +28,18 @@ function formatSalary(salary: number) {
   return `${formatPrice(salary)}/sem`;
 }
 
-type TransferPhase = "IDLE" | "CONTRACT_PENDING";
+type TransferPhase = "IDLE" | "CONTRACT_PENDING" | "OWN_PLAYER";
 
 export default function PlayerDetailModal({
   player,
   onClose,
-  userBudget = 50_000_000
+  userBudget = 50_000_000,
+  ownClubTeamId = null,
 }: {
   player: TransferPlayerResult;
   onClose: () => void;
   userBudget?: number;
+  ownClubTeamId?: string | null;
 }) {
   const [avatarFailed, setAvatarFailed] = useState(false);
   const [scouting, setScouting] = useState<PlayerScoutingData | null>(null);
@@ -58,16 +60,22 @@ export default function PlayerDetailModal({
   // Solo permite abrir el diálogo de inicio de contrato (que ya no es con el club).
   const [transferPhase, setTransferPhase] = useState<TransferPhase>("IDLE");
 
+  // BUG FIX (bug 1): marca si ya hay una cesión activa para este jugador
+  // y bloquea el botón "Contactar para cesión" en consecuencia. Se consulta
+  // en paralelo al estado de transferencia.
+  const [activeLoanId, setActiveLoanId] = useState<string | null>(null);
+  const [activeLoanStatus, setActiveLoanStatus] = useState<string | null>(null);
+
   // Mientras se consulta el estado del transfer, mostramos un placeholder neutro
   // para no exponer los botones de "Contactar para transferencia/cesión" durante
   // el flash entre montaje y respuesta de /api/transfers/active.
   const [isLoadingPhase, setIsLoadingPhase] = useState(true);
 
-  const teamNameLower = (player.currentTeam?.name || "").toLowerCase();
-  const teamShortUpper = (player.currentTeam?.shortName || "").toUpperCase();
   const isFreeAgent = player.currentTeam?.eaId === "FREE_AGENTS";
   const sellerTeamName = isFreeAgent ? "Agente libre" : (player.currentTeam?.name || "Club Propietario");
-  const isOwnPlayer = teamNameLower.includes("northbridge") || teamShortUpper === "NFC";
+  const isOwnPlayer = Boolean(
+    ownClubTeamId && player.currentTeam?.id === ownClubTeamId,
+  );
 
   useEffect(() => {
     let isMounted = true;
@@ -112,21 +120,34 @@ export default function PlayerDetailModal({
     let cancelled = false;
     if (isOwnPlayer) {
       setIsLoadingPhase(false);
+      setActiveLoanId(null);
+      setActiveLoanStatus(null);
       return;
     }
     setIsLoadingPhase(true);
     setTransferPhase("IDLE");
-    const params = new URLSearchParams({ playerId: player.id });
-    fetch(`/api/transfers/active?${params.toString()}`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data: { active?: boolean } | null) => {
+    setActiveLoanId(null);
+    setActiveLoanStatus(null);
+    const transferParams = new URLSearchParams({ playerId: player.id });
+    const loanParams = new URLSearchParams({ playerId: player.id });
+
+    Promise.all([
+      fetch(`/api/transfers/active?${transferParams.toString()}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .catch(() => null),
+      fetch(`/api/loans/active?${loanParams.toString()}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .catch(() => null),
+    ])
+      .then(([transferData, loanData]) => {
         if (cancelled) return;
-        if (data?.active) {
+        if (transferData?.active) {
           setTransferPhase("CONTRACT_PENDING");
         }
-      })
-      .catch(() => {
-        /* ignore */
+        if (loanData?.hasActiveForPlayer) {
+          setActiveLoanId(loanData.playerLoanId ?? null);
+          setActiveLoanStatus(loanData.playerLoanStatus ?? null);
+        }
       })
       .finally(() => {
         if (!cancelled) setIsLoadingPhase(false);
@@ -170,6 +191,11 @@ export default function PlayerDetailModal({
 
   const handleLoanClick = async () => {
     if (isOwnPlayer || transferPhase !== "IDLE") return;
+    if (activeLoanId) {
+      setLoanError("Ya tienes una cesión activa para este jugador. Revisa tu Sección de Correos para aceptarla o rechazarla.");
+      setActiveDialog("NONE");
+      return;
+    }
     setActiveDialog("LOAN");
     setLoadingLoanProposal(true);
     setLoanError(null);
@@ -187,6 +213,15 @@ export default function PlayerDetailModal({
       const data = await res.json();
       setLoadingLoanProposal(false);
       if (data.error) {
+        if (data.error === "loan-already-active") {
+          setActiveLoanId(data.loanId ?? null);
+          setActiveLoanStatus(data.status ?? null);
+          setLoanError(
+            data.reason || "Ya tienes una cesión activa para este jugador.",
+          );
+          setActiveDialog("NONE");
+          return;
+        }
         setLoanError(
           data.reason ||
             (data.error === "transfer-window-closed"
@@ -280,7 +315,9 @@ export default function PlayerDetailModal({
 
   const loanLabel = isFreeAgent
     ? "Cesión no disponible para agentes libres"
-    : `Contactar con ${sellerTeamName} para cesión`;
+    : activeLoanId
+      ? "Cesión ya en curso para este jugador"
+      : `Contactar con ${sellerTeamName} para cesión`;
 
   return (
     <div className="fixed inset-0 z-[90] flex items-center justify-center overflow-y-auto bg-black/65 p-4 backdrop-blur-sm">
@@ -424,13 +461,13 @@ export default function PlayerDetailModal({
             Comprobando el estado de la operación...
           </div>
         ) : isOwnPlayer ? (
-          <div className="rounded-xl border border-[var(--theme-border)] bg-[var(--theme-background)] p-3.5 text-center font-bold text-[var(--theme-muted)]">
-            Este jugador ya pertenece a tu plantilla
+          <div className="rounded-xl border border-indigo-300 bg-indigo-50 p-3.5 text-center font-bold text-indigo-900 shadow-sm dark:border-indigo-500/40 dark:bg-indigo-950/40 dark:text-indigo-200">
+            Este jugador ya pertenece a tu plantilla. No puedes volver a negociar por él.
           </div>
         ) : transferPhase === "CONTRACT_PENDING" ? (
           <div className="space-y-3">
-            <div className="rounded-xl border border-[var(--theme-border)] bg-[var(--theme-accent-soft)] p-3.5 text-center font-bold text-[var(--theme-foreground)]">
-              El jugador está esperando para hacer su contrato. Revisa tu Sección de Correos para aceptar o rechazar la oferta del jugador.
+            <div className="rounded-xl border border-amber-300 bg-amber-50 p-3.5 text-center font-bold text-amber-900 shadow-sm dark:border-amber-500/40 dark:bg-amber-950/40 dark:text-amber-200">
+              Esperando a negociaciones de contrato. Mira tu correo para iniciar la firma con el jugador.
             </div>
             <button
               onClick={onClose}
@@ -449,7 +486,7 @@ export default function PlayerDetailModal({
             </button>
             <button
               onClick={handleLoanClick}
-              disabled={isFreeAgent}
+              disabled={isFreeAgent || Boolean(activeLoanId)}
               className="flex-1 rounded-xl bg-indigo-600 px-4 py-3 text-center font-bold text-white shadow hover:bg-indigo-700 active:scale-[0.99] transition disabled:cursor-not-allowed disabled:opacity-50"
             >
               {loanLabel}
@@ -500,6 +537,8 @@ export default function PlayerDetailModal({
             teamName: sellerTeamName,
           }}
           maxOfferLimit={currentBudget}
+          disabled={isOwnPlayer}
+          disabledReason="Este jugador ya pertenece a tu club."
           onClose={() => setActiveDialog("NONE")}
           onAgreementReached={handleAgreementReached}
         />
@@ -533,6 +572,7 @@ export default function PlayerDetailModal({
             open={true}
             playerName={player.name}
             sellerTeamName={sellerTeamName}
+            sellerTeamId={player.currentTeam?.id}
             initialMessage={loanProposalData.greeting}
             schedule={loanProposalData.schedule}
             totalWageCost={loanProposalData.totalWageCost}

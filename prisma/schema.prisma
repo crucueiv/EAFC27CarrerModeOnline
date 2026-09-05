@@ -45,13 +45,15 @@ enum MatchFormat {
 enum TransferStatus {
   PROPOSED
   ACCEPTED
-  REJECTED
+  AGREED_CLUB
+  WAITING_PLAYER_CONTRACT
   CONTRACT_NEGOTIATION_PENDING
   CONTRACT_NEGOTIATION_ACTIVE
   CONTRACT_NEGOTIATION_ACCEPTED
   CONTRACT_NEGOTIATION_REJECTED
   COMPLETED
   CANCELLED
+  REJECTED
 }
 
 enum LoanDuration {
@@ -65,6 +67,8 @@ enum LoanStatus {
   COUNTERED
   ACCEPTED
   REJECTED
+  AGREED_CLUB
+  WAITING_PLAYER_CONTRACT
   COMPLETED
   CANCELLED
   EXPIRED
@@ -131,6 +135,7 @@ enum NegotiationStatus {
   PENDING_AGREEMENT
   AGREED_PENDING_WINDOW
   AGREED_ACTIVE
+  AGREED_CLUB
   COMPLETED
   CANCELLED
   REJECTED
@@ -401,6 +406,7 @@ model Team {
   trophies          Trophy[]
   cupWinners        DomesticCupWinner[]
   calendarStates    TeamCalendarState[]
+  playersLoaned     Player[]            @relation("PlayerLoanedToTeam")
   @@index([normalizedName])
 }
 
@@ -460,6 +466,9 @@ model Player {
   nationality             Country?          @relation(fields: [nationalityId], references: [id])
   createdAt               DateTime          @default(now())
   updatedAt               DateTime          @updatedAt
+  isLoaned                Boolean           @default(false)
+  loanedToTeamId          String?
+  loanedToTeam            Team?             @relation("PlayerLoanedToTeam", fields: [loanedToTeamId], references: [id])
   rosters                 Roster[]
   ratingSnapshots         RatingSnapshot[]
   transfers               Transfer[]
@@ -485,6 +494,7 @@ model Roster {
   squadNo   Int?
   role      RosterRole @default(ROTACION)
   isActive  Boolean    @default(true)
+  isLoaned  Boolean    @default(false)
   team      Team       @relation(fields: [teamId], references: [id], onDelete: Cascade)
   player    Player     @relation(fields: [playerId], references: [id], onDelete: Cascade)
   owner     User?      @relation("RosterOwner", fields: [ownerId], references: [id])

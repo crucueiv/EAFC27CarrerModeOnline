@@ -33,6 +33,8 @@ export type ProcessNegotiationSuccess = {
   status:
     | "AGREED_ACTIVE"
     | "AGREED_PENDING_WINDOW"
+    | "AGREED_CLUB"
+    | "WAITING_PLAYER_CONTRACT"
     | "COMPLETED"
     | "CANCELLED_LOSER"
     | "CANCELLED_NO_PLAYER";
@@ -82,6 +84,8 @@ function isNegotiationDecided(status: string): boolean {
   return (
     status === "AGREED_PENDING_WINDOW" ||
     status === "AGREED_ACTIVE" ||
+    status === "AGREED_CLUB" ||
+    status === "WAITING_PLAYER_CONTRACT" ||
     status === "COMPLETED" ||
     status === "CANCELLED" ||
     status === "REJECTED"
@@ -238,7 +242,7 @@ export async function processNegotiation(
         where: {
           playerId: negotiation.playerId,
           id: { not: negotiation.id },
-          status: { in: ["PENDING_AGREEMENT", "AGREED_PENDING_WINDOW", "AGREED_ACTIVE"] },
+          status: { in: ["PENDING_AGREEMENT", "AGREED_PENDING_WINDOW", "AGREED_ACTIVE", "AGREED_CLUB"] },
         },
         orderBy: { createdAt: "asc" },
         select: {
@@ -400,35 +404,12 @@ export async function processNegotiation(
               buyerId: negotiation.buyerId,
               sellerId: negotiation.sellerId,
               fee: Math.round(negotiation.agreedPrice),
-              status: "COMPLETED",
-              completedAt: input.simulatedNow,
+              status: "WAITING_PLAYER_CONTRACT",
+              completedAt: null,
               negotiationId: negotiation.id,
             },
           });
           transferId = created.id;
-
-          const activeRoster = await tx.roster.findFirst({
-            where: { playerId: negotiation.playerId, isActive: true },
-            select: { id: true, teamId: true },
-          });
-          if (activeRoster) {
-            await tx.roster.update({
-              where: { id: activeRoster.id },
-              data: { teamId: negotiation.buyerTeamId, isActive: true },
-            });
-          } else {
-            await tx.roster.create({
-              data: {
-                teamId: negotiation.buyerTeamId,
-                playerId: negotiation.playerId,
-                seasonId: negotiation.seasonId,
-                isActive: true,
-                role: negotiation.squadRole === "CLAVE" || negotiation.squadRole === "IMPORTANTE" || negotiation.squadRole === "ROTACION"
-                  ? negotiation.squadRole
-                  : "ROTACION",
-              },
-            });
-          }
         } else {
           const loanDuration = ensureLoanDuration(negotiation.type as TransferType);
           const startsAt = input.simulatedNow;
@@ -453,42 +434,21 @@ export async function processNegotiation(
                   ? Math.round(negotiation.buyoutOptionPrice)
                   : null,
               fee: Math.round(negotiation.agreedPrice),
-              status: "COMPLETED",
+              status: "WAITING_PLAYER_CONTRACT",
               startsAt,
               endsAt,
-              completedAt: input.simulatedNow,
+              completedAt: null,
               negotiationId: negotiation.id,
               squadRoleSnapshot: negotiation.squadRole,
             },
           });
           loanId = created.id;
-
-          const activeRoster = await tx.roster.findFirst({
-            where: { playerId: negotiation.playerId, isActive: true },
-            select: { id: true },
-          });
-          if (activeRoster) {
-            await tx.roster.update({
-              where: { id: activeRoster.id },
-              data: { teamId: negotiation.buyerTeamId, isActive: true },
-            });
-          } else {
-            await tx.roster.create({
-              data: {
-                teamId: negotiation.buyerTeamId,
-                playerId: negotiation.playerId,
-                seasonId: negotiation.seasonId,
-                isActive: true,
-                role: "ROTACION",
-              },
-            });
-          }
         }
 
         await tx.negotiation.update({
           where: { id: negotiation.id },
           data: {
-            status: "COMPLETED",
+            status: "AGREED_CLUB",
             decidedAt: input.simulatedNow,
             effectiveDate: input.simulatedNow,
           },
@@ -503,7 +463,7 @@ export async function processNegotiation(
 
         return {
           ok: true as const,
-          status: "COMPLETED" as const,
+          status: "AGREED_CLUB" as const,
           negotiationId: negotiation.id,
           effectiveDate: input.simulatedNow,
           transferId,
@@ -587,6 +547,338 @@ export async function processNegotiation(
           buyerBudget: buyerBudgetAfter,
           sellerBudget: sellerBudgetAfter,
         },
+      };
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === "PrismaClientKnownRequestError") {
+      return {
+        ok: false,
+        reason: "PRISMA_ERROR",
+        message: `Prisma error: ${err.message}`,
+      };
+    }
+    throw err;
+  }
+}
+
+export type FinalizePlayerContractInput = {
+  negotiationId: string;
+  simulatedNow: Date;
+  prismaClient?: PrismaClient;
+};
+
+export type FinalizePlayerContractResult =
+  | {
+      ok: true;
+      status: "COMPLETED";
+      negotiationId: string;
+      transferId: string | null;
+      loanId: string | null;
+      effectiveDate: Date;
+    }
+  | {
+      ok: false;
+      reason:
+        | "PRISMA_UNAVAILABLE"
+        | "NEGOTIATION_NOT_FOUND"
+        | "INVALID_STATUS"
+        | "PLAYER_NOT_FOUND"
+        | "TEAM_NOT_FOUND"
+        | "PLAYER_ALREADY_OWNED"
+        | "PRISMA_ERROR";
+      message: string;
+    };
+
+export async function finalizePlayerContract(
+  input: FinalizePlayerContractInput,
+): Promise<FinalizePlayerContractResult> {
+  const prisma = input.prismaClient ?? defaultPrisma;
+  if (!prisma) {
+    return {
+      ok: false,
+      reason: "PRISMA_UNAVAILABLE",
+      message: "Prisma client unavailable",
+    };
+  }
+
+  const negotiation = await prisma.negotiation.findUnique({
+    where: { id: input.negotiationId },
+    include: {
+      season: { select: { id: true, endDate: true } },
+      player: { select: { id: true, name: true } },
+    },
+  });
+  if (!negotiation) {
+    return {
+      ok: false,
+      reason: "NEGOTIATION_NOT_FOUND",
+      message: "Negotiation not found",
+    };
+  }
+
+  const isLoanType = negotiation.type !== "PERMANENT";
+  if (isLoanType) {
+    return {
+      ok: false,
+      reason: "INVALID_STATUS",
+      message: "Use signLoanPlayerContract for loan negotiations",
+    };
+  }
+
+  if (negotiation.status !== "AGREED_CLUB") {
+    return {
+      ok: false,
+      reason: "INVALID_STATUS",
+      message: `Cannot sign contract for status ${negotiation.status}`,
+    };
+  }
+
+  const transfer = await prisma.transfer.findFirst({
+    where: { negotiationId: negotiation.id },
+    orderBy: { createdAt: "desc" },
+  });
+  if (!transfer) {
+    return {
+      ok: false,
+      reason: "NEGOTIATION_NOT_FOUND",
+      message: "Associated transfer not found for this negotiation",
+    };
+  }
+
+  try {
+    return await withSerializableTransaction(prisma, async (tx) => {
+      const player = await tx.player.findUnique({
+        where: { id: negotiation.playerId },
+        select: { id: true },
+      });
+      if (!player) {
+        return {
+          ok: false as const,
+          reason: "PLAYER_NOT_FOUND" as const,
+          message: "Player not found",
+        };
+      }
+
+      const activeRoster = await tx.roster.findFirst({
+        where: { playerId: negotiation.playerId, isActive: true },
+        select: { id: true, teamId: true },
+      });
+      if (activeRoster) {
+        await tx.roster.update({
+          where: { id: activeRoster.id },
+          data: {
+            teamId: negotiation.buyerTeamId,
+            isActive: true,
+            isLoaned: false,
+          },
+        });
+      } else {
+        await tx.roster.create({
+          data: {
+            teamId: negotiation.buyerTeamId,
+            playerId: negotiation.playerId,
+            seasonId: negotiation.seasonId,
+            isActive: true,
+            isLoaned: false,
+            role:
+              negotiation.squadRole === "CLAVE" ||
+              negotiation.squadRole === "IMPORTANTE" ||
+              negotiation.squadRole === "ROTACION"
+                ? negotiation.squadRole
+                : "ROTACION",
+          },
+        });
+      }
+
+      await tx.player.update({
+        where: { id: negotiation.playerId },
+        data: { isLoaned: false, loanedToTeamId: null },
+      });
+
+      await tx.transfer.update({
+        where: { id: transfer.id },
+        data: {
+          status: "COMPLETED",
+          completedAt: input.simulatedNow,
+        },
+      });
+
+      await tx.negotiation.update({
+        where: { id: negotiation.id },
+        data: {
+          status: "COMPLETED",
+          decidedAt: input.simulatedNow,
+          effectiveDate: input.simulatedNow,
+        },
+      });
+
+      return {
+        ok: true as const,
+        status: "COMPLETED" as const,
+        negotiationId: negotiation.id,
+        transferId: transfer.id,
+        loanId: null,
+        effectiveDate: input.simulatedNow,
+      };
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === "PrismaClientKnownRequestError") {
+      return {
+        ok: false,
+        reason: "PRISMA_ERROR",
+        message: `Prisma error: ${err.message}`,
+      };
+    }
+    throw err;
+  }
+}
+
+export type FinalizeLoanPlayerContractInput = {
+  negotiationId: string;
+  simulatedNow: Date;
+  prismaClient?: PrismaClient;
+};
+
+export type FinalizeLoanPlayerContractResult =
+  | {
+      ok: true;
+      status: "COMPLETED";
+      negotiationId: string;
+      loanId: string;
+      effectiveDate: Date;
+    }
+  | {
+      ok: false;
+      reason:
+        | "PRISMA_UNAVAILABLE"
+        | "NEGOTIATION_NOT_FOUND"
+        | "INVALID_STATUS"
+        | "PLAYER_NOT_FOUND"
+        | "LOAN_NOT_FOUND"
+        | "PRISMA_ERROR";
+      message: string;
+    };
+
+export async function finalizeLoanPlayerContract(
+  input: FinalizeLoanPlayerContractInput,
+): Promise<FinalizeLoanPlayerContractResult> {
+  const prisma = input.prismaClient ?? defaultPrisma;
+  if (!prisma) {
+    return {
+      ok: false,
+      reason: "PRISMA_UNAVAILABLE",
+      message: "Prisma client unavailable",
+    };
+  }
+
+  const negotiation = await prisma.negotiation.findUnique({
+    where: { id: input.negotiationId },
+  });
+  if (!negotiation) {
+    return {
+      ok: false,
+      reason: "NEGOTIATION_NOT_FOUND",
+      message: "Negotiation not found",
+    };
+  }
+  if (negotiation.type === "PERMANENT") {
+    return {
+      ok: false,
+      reason: "INVALID_STATUS",
+      message: "Use finalizePlayerContract for permanent transfers",
+    };
+  }
+  if (negotiation.status !== "AGREED_CLUB") {
+    return {
+      ok: false,
+      reason: "INVALID_STATUS",
+      message: `Cannot sign loan contract for status ${negotiation.status}`,
+    };
+  }
+
+  const loan = await prisma.loan.findFirst({
+    where: { negotiationId: negotiation.id },
+    orderBy: { createdAt: "desc" },
+  });
+  if (!loan) {
+    return {
+      ok: false,
+      reason: "LOAN_NOT_FOUND",
+      message: "Associated loan not found for this negotiation",
+    };
+  }
+
+  try {
+    return await withSerializableTransaction(prisma, async (tx) => {
+      const player = await tx.player.findUnique({
+        where: { id: negotiation.playerId },
+        select: { id: true },
+      });
+      if (!player) {
+        return {
+          ok: false as const,
+          reason: "PLAYER_NOT_FOUND" as const,
+          message: "Player not found",
+        };
+      }
+
+      const activeRoster = await tx.roster.findFirst({
+        where: { playerId: negotiation.playerId, isActive: true },
+        select: { id: true, teamId: true },
+      });
+      if (activeRoster) {
+        await tx.roster.update({
+          where: { id: activeRoster.id },
+          data: {
+            teamId: negotiation.buyerTeamId,
+            isActive: true,
+            isLoaned: true,
+          },
+        });
+      } else {
+        await tx.roster.create({
+          data: {
+            teamId: negotiation.buyerTeamId,
+            playerId: negotiation.playerId,
+            seasonId: negotiation.seasonId,
+            isActive: true,
+            isLoaned: true,
+            role: "ROTACION",
+          },
+        });
+      }
+
+      await tx.player.update({
+        where: { id: negotiation.playerId },
+        data: {
+          isLoaned: true,
+          loanedToTeamId: negotiation.buyerTeamId,
+        },
+      });
+
+      await tx.loan.update({
+        where: { id: loan.id },
+        data: {
+          status: "COMPLETED",
+          completedAt: input.simulatedNow,
+        },
+      });
+
+      await tx.negotiation.update({
+        where: { id: negotiation.id },
+        data: {
+          status: "COMPLETED",
+          decidedAt: input.simulatedNow,
+          effectiveDate: input.simulatedNow,
+        },
+      });
+
+      return {
+        ok: true as const,
+        status: "COMPLETED" as const,
+        negotiationId: negotiation.id,
+        loanId: loan.id,
+        effectiveDate: input.simulatedNow,
       };
     });
   } catch (err) {

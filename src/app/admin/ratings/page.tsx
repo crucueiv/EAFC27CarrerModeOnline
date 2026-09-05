@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { isAdminEmail } from "@/lib/admin";
 import { MockRatingsProvider } from "@/domain/ratings/mockProvider";
 import { PreserveAssignmentsAdapter } from "@/domain/ratings/provider";
+import { PageTitle } from "@/components/providers/PageTitleProvider";
 
 export const dynamic = "force-dynamic";
 
@@ -21,6 +22,7 @@ export default async function AdminRatingsPage() {
   ]);
 
   return (
+    <PageTitle title="Ratings de jugadores">
     <div>
       <h1 className="text-3xl font-bold text-[var(--theme-foreground)]">Ratings de jugadores</h1>
       <p className="mt-2 text-[var(--theme-muted)]">Vista previa del proveedor. Las asignaciones internas se conservan mediante el ID externo.</p>
@@ -41,5 +43,6 @@ export default async function AdminRatingsPage() {
         ))}
       </div>
     </div>
+    </PageTitle>
   );
 }

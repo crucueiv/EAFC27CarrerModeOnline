@@ -5,6 +5,45 @@ import { getSimulatedCurrentDate } from "@/lib/calendar/simulatedClock";
 
 export type LoanType = "SHORT_TERM" | "ONE_YEAR" | "TWO_YEARS";
 
+export const ACTIVE_LOAN_STATUSES = [
+  "PROPOSED",
+  "COUNTERED",
+  "ACCEPTED",
+  "COMPLETED",
+  "BUY_OPTION_TRIGGERED",
+] as const;
+
+export const OPEN_LOAN_STATUSES = [
+  "PROPOSED",
+  "COUNTERED",
+  "ACCEPTED",
+  "AGREED_CLUB",
+  "WAITING_PLAYER_CONTRACT",
+] as const;
+
+export function clampPercent(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(100, value));
+}
+
+export function calculateLoanWageShare(
+  weeklyWage: number,
+  buyerSalaryPercent: number,
+): number {
+  if (!Number.isFinite(weeklyWage) || weeklyWage <= 0) return 0;
+  const pct = clampPercent(buyerSalaryPercent);
+  return Math.round(weeklyWage * (pct / 100));
+}
+
+export function calculateLoanWageCost(
+  weeklyWage: number,
+  wageShareBuyerPct: number,
+  weeks: number,
+): number {
+  const safeWeeks = Math.max(1, Math.floor(Number.isFinite(weeks) ? weeks : 1));
+  return Math.round(calculateLoanWageShare(weeklyWage, wageShareBuyerPct) * safeWeeks);
+}
+
 export type ProcessExpiredLoansResult = {
   ok: boolean;
   expired: number;
@@ -131,9 +170,14 @@ export async function returnLoanedPlayer(
       if (roster) {
         await tx.roster.update({
           where: { id: roster.id },
-          data: { teamId: loan.sellerTeamId, isActive: true },
+          data: { teamId: loan.sellerTeamId, isActive: true, isLoaned: false },
         });
       }
+
+      await tx.player.update({
+        where: { id: loan.playerId },
+        data: { isLoaned: false, loanedToTeamId: null },
+      });
 
       await tx.loan.update({
         where: { id: loan.id },
@@ -207,31 +251,10 @@ export async function executeLoanBuyOption(
           sellerTeamId: loan.sellerTeamId,
           buyerTeamId: loan.buyerTeamId,
           fee: loan.buyOptionPrice,
-          status: "COMPLETED",
-          completedAt: input.simulatedNow,
+          status: "WAITING_PLAYER_CONTRACT",
+          completedAt: null,
         },
       });
-
-      const roster = await tx.roster.findFirst({
-        where: { playerId: loan.playerId, isActive: true, seasonId: loan.seasonId },
-        select: { id: true },
-      });
-      if (roster) {
-        await tx.roster.update({
-          where: { id: roster.id },
-          data: { teamId: loan.buyerTeamId, isActive: true },
-        });
-      } else {
-        await tx.roster.create({
-          data: {
-            teamId: loan.buyerTeamId,
-            playerId: loan.playerId,
-            seasonId: loan.seasonId,
-            isActive: true,
-            role: "ROTACION",
-          },
-        });
-      }
 
       await tx.loan.update({
         where: { id: loan.id },
@@ -255,7 +278,7 @@ export async function activateLoan(input: ActivateLoanInput): Promise<LoanOpResu
   const prisma = input.prismaClient ?? defaultPrisma;
   if (!prisma) return { ok: false, reason: "PRISMA_UNAVAILABLE" };
 
-  try {
+    try {
     return await withSerializableTransaction(prisma, async (tx) => {
       const loan = await tx.loan.findUnique({
         where: { id: input.loanId },
@@ -269,35 +292,16 @@ export async function activateLoan(input: ActivateLoanInput): Promise<LoanOpResu
         },
       });
       if (!loan) return { ok: false as const, reason: "LOAN_NOT_FOUND" };
-      if (loan.status === "COMPLETED") return { ok: true as const, status: "ACTIVE" as const };
-      if (loan.status !== "ACCEPTED") {
-        return { ok: false as const, reason: `INVALID_STATUS:${loan.status}` };
+      if (loan.status === "WAITING_PLAYER_CONTRACT" || loan.status === "COMPLETED") {
+        return { ok: true as const, status: "ACTIVE" as const };
       }
-
-      const roster = await tx.roster.findFirst({
-        where: { playerId: loan.playerId, isActive: true, seasonId: loan.seasonId },
-        select: { id: true },
-      });
-      if (roster) {
-        await tx.roster.update({
-          where: { id: roster.id },
-          data: { teamId: loan.buyerTeamId, isActive: true },
-        });
-      } else {
-        await tx.roster.create({
-          data: {
-            teamId: loan.buyerTeamId,
-            playerId: loan.playerId,
-            seasonId: loan.seasonId,
-            isActive: true,
-            role: "ROTACION",
-          },
-        });
+      if (loan.status !== "ACCEPTED" && loan.status !== "AGREED_CLUB") {
+        return { ok: false as const, reason: `INVALID_STATUS:${loan.status}` };
       }
 
       await tx.loan.update({
         where: { id: loan.id },
-        data: { status: "COMPLETED", completedAt: input.simulatedNow },
+        data: { status: "WAITING_PLAYER_CONTRACT", completedAt: null },
       });
 
       return { ok: true as const, status: "ACTIVE" as const };
@@ -318,4 +322,27 @@ export async function processExpiredLoansForUser(input: {
     return { ok: false, expired: 0, buyOptionsTriggered: 0, errors: [{ loanId: "*", reason: state.reason }] };
   }
   return processExpiredLoans({ simulatedNow: state.currentDate, prismaClient: prisma });
+}
+
+export type ActiveLoanLookup = {
+  id: string;
+  status: string;
+} | null;
+
+export async function findActiveLoanForBuyer(input: {
+  playerId: string;
+  buyerTeamId: string;
+  prismaClient?: PrismaClient;
+}): Promise<ActiveLoanLookup> {
+  const prisma = input.prismaClient ?? defaultPrisma;
+  if (!prisma) return null;
+  const loan = await prisma.loan.findFirst({
+    where: {
+      playerId: input.playerId,
+      buyerTeamId: input.buyerTeamId,
+      status: { in: [...ACTIVE_LOAN_STATUSES] },
+    },
+    select: { id: true, status: true },
+  });
+  return loan;
 }

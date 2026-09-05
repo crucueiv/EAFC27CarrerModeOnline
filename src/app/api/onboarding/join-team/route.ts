@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { ensureCalendarState } from "@/lib/calendar/advanceService";
+import { getSingletonCareerGroupId } from "@/lib/careerGroup";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +23,7 @@ export async function POST(request: Request) {
 
   const team = await prisma.team.findUnique({
     where: { id: body.teamId },
-    include: { league: { select: { careerGroupId: true } } },
+    include: { league: { select: { id: true, careerGroupId: true } } },
   });
   if (!team) {
     return NextResponse.json({ error: "Equipo no encontrado" }, { status: 404 });
@@ -30,9 +31,18 @@ export async function POST(request: Request) {
   if (team.managerId) {
     return NextResponse.json({ error: "El equipo ya tiene manager" }, { status: 409 });
   }
-  const careerGroupId = team.league?.careerGroupId;
+
+  const singletonId = await getSingletonCareerGroupId();
+  let careerGroupId = team.league?.careerGroupId;
   if (!careerGroupId) {
-    return NextResponse.json({ error: "Equipo sin CareerGroup" }, { status: 400 });
+    careerGroupId = singletonId;
+  }
+  if (careerGroupId !== singletonId && team.league) {
+    await prisma.league.update({
+      where: { id: team.league.id },
+      data: { careerGroupId: singletonId },
+    });
+    careerGroupId = singletonId;
   }
 
   const openWindow = await prisma.transferWindow.findFirst({

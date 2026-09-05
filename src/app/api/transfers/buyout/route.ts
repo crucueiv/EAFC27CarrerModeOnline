@@ -3,10 +3,13 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { generateReleaseClauseEmail } from "@/lib/emails/templates";
 import { getOrCreateActiveSeason } from "@/lib/seasons";
+import { assertNotOwnPlayer } from "@/lib/transfers/ownership";
 
 type TransferStatus =
   | "PROPOSED"
   | "ACCEPTED"
+  | "AGREED_CLUB"
+  | "WAITING_PLAYER_CONTRACT"
   | "CONTRACT_NEGOTIATION_PENDING"
   | "CONTRACT_NEGOTIATION_ACTIVE"
   | "CONTRACT_NEGOTIATION_ACCEPTED"
@@ -15,6 +18,8 @@ type TransferStatus =
 const ACTIVE_TRANSFER_STATUS: TransferStatus[] = [
   "PROPOSED",
   "ACCEPTED",
+  "AGREED_CLUB",
+  "WAITING_PLAYER_CONTRACT",
   "CONTRACT_NEGOTIATION_PENDING",
   "CONTRACT_NEGOTIATION_ACTIVE",
   "CONTRACT_NEGOTIATION_ACCEPTED",
@@ -101,6 +106,20 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "No autenticado" }, { status: 401 });
     }
 
+    const ownership = await assertNotOwnPlayer({ playerId, userId });
+    if (!ownership.ok) {
+      return NextResponse.json(
+        {
+          success: false,
+          reason: "PLAYER_ALREADY_OWNED",
+          message:
+            "No puedes pagar la cláusula de un jugador que ya pertenece a tu club.",
+          ownership: ownership.ownership,
+        },
+        { status: 409 },
+      );
+    }
+
     // Obtener o crear la season ACTIVE del CareerGroup del usuario.
     // Esto desbloquea el flujo de traspasos para usuarios nuevos que aún
     // no hayan iniciado una temporada manualmente.
@@ -151,11 +170,11 @@ export async function POST(request: Request) {
         buyerTeamId: userTeam.id,
         sellerTeamId: currentRoster?.teamId ?? userTeam.id,
         fee: isFreeAgentTransfer ? 0 : releaseClause,
-        status: "CONTRACT_NEGOTIATION_PENDING",
+        status: "WAITING_PLAYER_CONTRACT",
         completedAt: null
       }
     });
-    console.log(`[buyout] transfer record created with status CONTRACT_NEGOTIATION_PENDING`);
+    console.log(`[buyout] transfer record created with status WAITING_PLAYER_CONTRACT`);
 
     if (userId && player) {
       try {
@@ -181,6 +200,7 @@ export async function POST(request: Request) {
             body: emailBody,
             metadata: {
               type: "RELEASE_CLAUSE",
+              playerId,
               playerName: player.name,
               playerOverall: player.overall,
               releaseClause,
@@ -189,16 +209,17 @@ export async function POST(request: Request) {
               agentName: agent.name,
               agentAgency: agent.agency,
               sellerTeamName: sellerTeam?.name ?? null,
-              isFreeAgentTransfer
+              isFreeAgentTransfer,
+              actionUrl: `/transfers?playerId=${playerId}#contract`,
             }
           }
         });
-        console.log(`[buyout] ✅ email created successfully: id=${email.id}, from=${agent.email}, subject="${subject}"`);
+        console.log(`[buyout] email created successfully: id=${email.id}, from=${agent.email}, subject="${subject}"`);
       } catch (emailErr) {
-        console.error("[buyout] ❌ failed to create email (continuing buyout):", emailErr);
+        console.error("[buyout] failed to create email (continuing buyout):", emailErr);
       }
     } else {
-      console.warn(`[buyout] ⚠️ skipping email: userId=${userId}, player=${player?.id}`);
+      console.warn(`[buyout] skipping email: userId=${userId}, player=${player?.id}`);
     }
 
     return NextResponse.json({
@@ -212,7 +233,7 @@ export async function POST(request: Request) {
         : "Cláusula abonada. Se ha enviado una notificación a tu sección de correos para iniciar la negociación de contrato."
     });
   } catch (error) {
-    console.error("[buyout] ❌ error processing buyout:", error);
+    console.error("[buyout] error processing buyout:", error);
     return NextResponse.json({ error: "Error interno al procesar el pago de la cláusula" }, { status: 500 });
   }
 }

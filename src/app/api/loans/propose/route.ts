@@ -2,7 +2,14 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { canPlayerBeLoanedOut } from "@/lib/transfers/loanEligibility";
-import { computeLoanEndDate, type LoanType } from "@/lib/transfers/loanEngine";
+import {
+  ACTIVE_LOAN_STATUSES,
+  computeLoanEndDate,
+  findActiveLoanForBuyer,
+  type LoanType,
+  calculateLoanWageCost,
+  calculateLoanWageShare,
+} from "@/lib/transfers/loanEngine";
 import { getRandomLoanQuote, formatEuro } from "@/lib/transfers/loanNegotiationEngine";
 import type { LoanDuration } from "@/lib/transfers/loanNegotiationEngine";
 import { getSimulatedCurrentDate } from "@/lib/calendar/simulatedClock";
@@ -12,6 +19,8 @@ import {
   pureBuildWinterWindow,
 } from "@/lib/calendar/transferWindowResolver";
 import { getOrCreateActiveSeason } from "@/lib/seasons";
+import { assertNotOwnPlayer } from "@/lib/transfers/ownership";
+import { calculatePlayerValueAndClause } from "@/lib/transfers/pricingEngine";
 
 type Body = {
   playerId: string;
@@ -30,6 +39,19 @@ export async function POST(request: Request) {
   const body = (await request.json().catch(() => null)) as Body | null;
   if (!body || !body.playerId || !body.duration) {
     return NextResponse.json({ error: "bad-request" }, { status: 400 });
+  }
+
+  const ownership = await assertNotOwnPlayer({ playerId: body.playerId, userId });
+  if (!ownership.ok) {
+    return NextResponse.json(
+      {
+        error: "PLAYER_ALREADY_OWNED",
+        reason:
+          "No puedes proponer una cesión por un jugador que ya pertenece a tu club.",
+        ownership: ownership.ownership,
+      },
+      { status: 409 },
+    );
   }
 
   const userTeam = await prisma.team.findFirst({
@@ -56,7 +78,23 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "self-loan" }, { status: 400 });
   }
 
-  // BUG FIX: pasar el sellerTeam.id real en lugar de string vacío.
+  const existingLoan = await findActiveLoanForBuyer({
+    playerId: body.playerId,
+    buyerTeamId: userTeam.id,
+    prismaClient: prisma,
+  });
+  if (existingLoan) {
+    return NextResponse.json(
+      {
+        error: "loan-already-active",
+        status: existingLoan.status,
+        loanId: existingLoan.id,
+        reason: "Ya tienes una cesión activa para este jugador.",
+      },
+      { status: 409 },
+    );
+  }
+
   const eligibility = await canPlayerBeLoanedOut(body.playerId, sellerTeam.id);
   if (!eligibility.eligible) {
     return NextResponse.json(
@@ -81,7 +119,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "transfer-window-closed" }, { status: 400 });
   }
 
-  // Mapear a TransferType
   const typeMap: Record<LoanDuration, "LOAN_SHORT_TERM" | "LOAN_1_YEAR" | "LOAN_2_YEARS"> = {
     SHORT_TERM: "LOAN_SHORT_TERM",
     ONE_YEAR: "LOAN_1_YEAR",
@@ -96,15 +133,29 @@ export async function POST(request: Request) {
     seasonEndDate: seasonEndDate?.endDate ?? null,
   });
   const weeks = Math.max(1, Math.ceil((endsAt.getTime() - startsAt.getTime()) / (7 * 24 * 60 * 60 * 1000)));
-  const totalWageCost = Math.round(
-    roster.player.marketValue * (body.wageShareBuyerPct / 100) * Math.min(weeks, 52),
-  );
+
+  const financial = calculatePlayerValueAndClause({
+    overall: roster.player.overall,
+    potential: roster.player.potential,
+    birthdate: roster.player.birthdate,
+    position: roster.player.position,
+    internationalReputation: roster.player.internationalReputation,
+    pace: roster.player.pace,
+    shooting: roster.player.shooting,
+    passing: roster.player.passing,
+    dribbling: roster.player.dribbling,
+    defending: roster.player.defending,
+    physical: roster.player.physical,
+    role: "Rotation",
+  });
+  const weeklyWage = financial.weeklyWage;
+  const buyerWeeklyWageCost = calculateLoanWageShare(weeklyWage, body.wageShareBuyerPct);
+  const totalWageCost = calculateLoanWageCost(weeklyWage, body.wageShareBuyerPct, weeks);
 
   if (userTeam.budget < totalWageCost) {
     return NextResponse.json({ error: "insufficient-budget" }, { status: 400 });
   }
 
-  // Crea la Negotiation inicial. processNegotiation la consolidará al aceptar.
   const windowOpensAt: Date = windowState.kind === "WITHIN" ? simulatedNow : windowState.next.opensAt;
   const negotiation = await prisma.negotiation.create({
     data: {
@@ -152,6 +203,8 @@ export async function POST(request: Request) {
         acceptedHasBuyOption: null,
         acceptedBuyOptionPrice: null,
         totalWageCost,
+        weeklyWage,
+        buyerWeeklyWageCost,
       },
       negotiationId: negotiation.id,
     },
@@ -168,8 +221,14 @@ export async function POST(request: Request) {
     greeting,
     schedule: { startsAt, endsAt, weeks },
     totalWageCost,
+    weeklyWage,
+    buyerWeeklyWageCost,
+    wageShareBuyerPct: body.wageShareBuyerPct,
     formatted: {
       wageShareBuyerPct: body.wageShareBuyerPct,
+      weeklyWage: formatEuro(weeklyWage),
+      buyerWeeklyWage: formatEuro(buyerWeeklyWageCost),
+      totalWageCost: formatEuro(totalWageCost),
       buyOptionPrice: body.buyOptionPrice ? formatEuro(body.buyOptionPrice) : null,
     },
   });

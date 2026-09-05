@@ -10,6 +10,7 @@ import {
   pureBuildWinterWindow,
   type TransferWindowSnapshot,
 } from "@/lib/calendar/transferWindowResolver";
+import { assertNotOwnPlayer } from "@/lib/transfers/ownership";
 
 export async function POST(request: Request) {
   try {
@@ -46,6 +47,20 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "No autenticado" }, { status: 401 });
     }
 
+    const ownership = await assertNotOwnPlayer({ playerId, userId });
+    if (!ownership.ok) {
+      return NextResponse.json(
+        {
+          success: false,
+          reason: "PLAYER_ALREADY_OWNED",
+          message:
+            "No puedes traspasar a un jugador que ya pertenece a tu club.",
+          ownership: ownership.ownership,
+        },
+        { status: 409 },
+      );
+    }
+
     const userTeam = await prisma.team.findFirst({
       where: { managerId: userId },
       select: { id: true, name: true, budget: true, leagueId: true },
@@ -77,7 +92,6 @@ export async function POST(request: Request) {
     const sim = await getSimulatedCurrentDate({ userId, prismaClient: prisma });
     const simulatedNow = sim.ok ? sim.currentDate : new Date();
 
-    // Calcula la ventana futura por defecto (1 jul o 1 ene) por si está fuera de ventana.
     const month = simulatedNow.getUTCMonth() + 1;
     const day = simulatedNow.getUTCDate();
     let fallbackWindow: TransferWindowSnapshot;
@@ -162,12 +176,16 @@ export async function POST(request: Request) {
             body: emailBody,
             metadata: {
               type: "CLUB_NEGOTIATION_PENDING_WINDOW",
+              playerId,
               playerName: player.name,
               playerOverall: player.overall,
               buyingClubName: userTeam.name,
               buyingManagerName: managerName,
               sellerTeamName: sellerTeam.name,
+              negotiationId: result.negotiationId,
+              transferId: result.transferId,
               effectiveDate: result.effectiveDate.toISOString(),
+              actionUrl: `/transfers?playerId=${playerId}#contract`,
             },
           },
         });
@@ -180,6 +198,8 @@ export async function POST(request: Request) {
         requiresContractNegotiation: false,
         deferred: true,
         effectiveDate: result.effectiveDate.toISOString(),
+        negotiationId: result.negotiationId,
+        transferId: result.transferId,
         message: `Acuerdo de traspaso firmado. El cobro se ha ejecutado y la transferencia del jugador se hará efectiva el ${result.effectiveDate.toISOString().slice(0, 10)} al abrirse la próxima ventana.`,
       });
     }
@@ -195,7 +215,7 @@ export async function POST(request: Request) {
       );
     }
 
-    if (result.status === "COMPLETED") {
+    if (result.status === "AGREED_CLUB" || result.status === "WAITING_PLAYER_CONTRACT") {
       try {
         const managerName = session?.user?.username || session?.user?.name || "Manager";
         const { subject, body: emailBody, agent } = generateClubNegotiationEmail({
@@ -216,12 +236,16 @@ export async function POST(request: Request) {
             subject,
             body: emailBody,
             metadata: {
-              type: "CLUB_NEGOTIATION",
+              type: "CLUB_NEGOTIATION_AGREED",
+              playerId,
               playerName: player.name,
               playerOverall: player.overall,
               buyingClubName: userTeam.name,
               buyingManagerName: managerName,
               sellerTeamName: sellerTeam.name,
+              negotiationId: result.negotiationId,
+              transferId: result.transferId,
+              actionUrl: `/transfers?playerId=${playerId}#contract`,
             },
           },
         });
@@ -233,8 +257,10 @@ export async function POST(request: Request) {
         success: true,
         requiresContractNegotiation: true,
         remainingBudget: result.budgetAfter.buyerBudget,
+        negotiationId: result.negotiationId,
         transferId: result.transferId,
-        message: "Acuerdo de traspaso alcanzado. Se ha enviado una notificación a tu sección de correos para iniciar la negociación de contrato con el jugador.",
+        message:
+          "Acuerdo de traspaso alcanzado. Se ha enviado una notificación a tu sección de correos para iniciar la negociación de contrato con el jugador.",
       });
     }
 

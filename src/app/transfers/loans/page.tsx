@@ -2,6 +2,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import LoanCard from "@/components/transfers/LoanCard";
 import type { LoanDuration } from "@/lib/transfers/loanNegotiationEngine";
+import { PageTitle } from "@/components/providers/PageTitleProvider";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +31,7 @@ export default async function LoansPage() {
   });
 
   return (
+    <PageTitle title="Cesiones">
     <div className="space-y-6 p-6">
       <header>
         <h1 className="text-2xl font-black text-[var(--theme-foreground)]">Cesiones</h1>
@@ -63,5 +65,6 @@ export default async function LoansPage() {
         </div>
       )}
     </div>
+    </PageTitle>
   );
 }

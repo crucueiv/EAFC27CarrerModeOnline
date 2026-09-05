@@ -87,6 +87,7 @@ export default function CalendarClient() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [advancing, setAdvancing] = useState(false);
+  const [userNavigated, setUserNavigated] = useState(false);
 
   const fetchMonth = useCallback(async (y: number, m: number) => {
     setLoading(true);
@@ -110,6 +111,17 @@ export default function CalendarClient() {
     fetchMonth(year, month);
   }, [year, month, fetchMonth]);
 
+  useEffect(() => {
+    if (!data?.currentDate || userNavigated) return;
+    const d = new Date(data.currentDate);
+    const ny = d.getUTCFullYear();
+    const nm = d.getUTCMonth() + 1;
+    if (ny !== year || nm !== month) {
+      setYear(ny);
+      setMonth(nm);
+    }
+  }, [data?.currentDate, userNavigated, year, month]);
+
   const grid = buildMonthGrid(year, month);
   const currentDate = data?.currentDate ? new Date(data.currentDate) : null;
   const maxAllowed = data?.maxAllowedDate ? new Date(data.maxAllowedDate) : null;
@@ -131,6 +143,7 @@ export default function CalendarClient() {
   const canGoForward = data?.season ? monthEnd.getTime() < new Date(data.season.endDate).getTime() : true;
 
   const goPrev = () => {
+    setUserNavigated(true);
     if (month === 1) {
       setYear((y) => y - 1);
       setMonth(12);
@@ -139,6 +152,7 @@ export default function CalendarClient() {
     }
   };
   const goNext = () => {
+    setUserNavigated(true);
     if (month === 12) {
       setYear((y) => y + 1);
       setMonth(1);
@@ -148,9 +162,16 @@ export default function CalendarClient() {
   };
 
   const goToday = () => {
-    const t = new Date();
-    setYear(t.getUTCFullYear());
-    setMonth(t.getUTCMonth() + 1);
+    if (data?.currentDate) {
+      const d = new Date(data.currentDate);
+      setYear(d.getUTCFullYear());
+      setMonth(d.getUTCMonth() + 1);
+      setUserNavigated(false);
+    } else {
+      const t = new Date();
+      setYear(t.getUTCFullYear());
+      setMonth(t.getUTCMonth() + 1);
+    }
   };
 
   const advance = async () => {
@@ -163,9 +184,12 @@ export default function CalendarClient() {
         body: JSON.stringify({}),
       });
       if (res.ok) {
-        const t = new Date();
-        setYear(t.getUTCFullYear());
-        setMonth(t.getUTCMonth() + 1);
+        if (data.currentDate) {
+          const d = new Date(data.currentDate);
+          setYear(d.getUTCFullYear());
+          setMonth(d.getUTCMonth() + 1);
+          setUserNavigated(false);
+        }
       }
     } finally {
       setAdvancing(false);

@@ -21,6 +21,8 @@ export interface ClubNegotiationModalProps {
     managerAvatarUrl?: string;
   };
   maxOfferLimit?: number;
+  disabled?: boolean;
+  disabledReason?: string;
   onClose: () => void;
   onAgreementReached: (agreedPrice: number) => void;
 }
@@ -31,6 +33,8 @@ export const ClubNegotiationModal: React.FC<ClubNegotiationModalProps> = ({
   isOpen,
   player,
   maxOfferLimit,
+  disabled = false,
+  disabledReason,
   onClose,
   onAgreementReached,
 }) => {
@@ -274,6 +278,11 @@ export const ClubNegotiationModal: React.FC<ClubNegotiationModalProps> = ({
         <div className="p-6 bg-slate-950 border-t border-slate-800">
           {callStatus === 'active' ? (
             <form onSubmit={handleSendOffer} className="space-y-4">
+              {disabled && (
+                <p className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs font-semibold text-rose-300">
+                  {disabledReason ?? "No puedes iniciar una negociación por este jugador."}
+                </p>
+              )}
               <div>
                 <div className="relative">
                   <input
@@ -282,7 +291,8 @@ export const ClubNegotiationModal: React.FC<ClubNegotiationModalProps> = ({
                     placeholder={`Precio estimado: ${player.price.toLocaleString('es-ES')} €`}
                     value={userOffer}
                     onChange={(e) => setUserOffer(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-sm"
+                    disabled={disabled}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-sm disabled:opacity-50"
                   />
                   <span className="absolute right-4 top-3.5 text-xs font-bold text-slate-400">EUR</span>
                 </div>
@@ -302,7 +312,8 @@ export const ClubNegotiationModal: React.FC<ClubNegotiationModalProps> = ({
               <div className="flex gap-3">
                 <button
                   type="submit"
-                  className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-3 rounded-xl transition flex items-center justify-center gap-2 text-sm shadow-lg shadow-emerald-900/30"
+                  disabled={disabled}
+                  className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-3 rounded-xl transition flex items-center justify-center gap-2 text-sm shadow-lg shadow-emerald-900/30 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <Send size={16} /> Enviar Oferta
                 </button>
@@ -326,9 +337,21 @@ export const ClubNegotiationModal: React.FC<ClubNegotiationModalProps> = ({
                 }`}
               >
                 {callStatus === 'accepted'
-                  ? 'Acuerdos de traspaso alcanzados. Notificación formal enviada a la bandeja de entrada.'
+                  ? 'Acuerdos de traspaso alcanzados. Esperando a negociaciones de contrato: mira tu correo.'
                   : 'La llamada ha finalizado sin acuerdo.'}
               </div>
+              {callStatus === 'accepted' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    window.dispatchEvent(new CustomEvent('open-inbox'));
+                    onClose();
+                  }}
+                  className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-3 rounded-xl transition text-sm"
+                >
+                  Ir al correo
+                </button>
+              )}
               <button
                 onClick={onClose}
                 className="w-full bg-slate-800 hover:bg-slate-700 text-white font-semibold py-3 rounded-xl transition text-sm"

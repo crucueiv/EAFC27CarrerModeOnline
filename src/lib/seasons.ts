@@ -1,5 +1,5 @@
-import { randomBytes } from "crypto";
 import { prisma } from "@/lib/prisma";
+import { getSingletonCareerGroupId } from "@/lib/careerGroup";
 
 type SeasonResult = {
   id: string;
@@ -10,11 +10,11 @@ type SeasonResult = {
 };
 
 /**
- * Devuelve la season ACTIVE del CareerGroup al que pertenece el usuario.
+ * Devuelve la season ACTIVE del singleton CareerGroup.
  *
- * Si el usuario aún no tiene CareerGroup, se crea uno automáticamente junto con
- * una season 1. Esto permite que el flujo de traspasos funcione sin que el
- * usuario haya iniciado manualmente una temporada.
+ * Si el usuario aún no tiene membership, lo une al singleton y crea una
+ * nueva season 1. Esto permite que el flujo de traspasos funcione sin que
+ * el usuario haya iniciado manualmente una temporada.
  */
 export async function getOrCreateActiveSeason(
   userId: string,
@@ -45,28 +45,16 @@ export async function getOrCreateActiveSeason(
   }
 
   // 2. Si pertenece a un CareerGroup pero no tiene season ACTIVE, crear una nueva.
-  let careerGroupId = membership?.careerGroupId;
-  if (!careerGroupId) {
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { name: true, username: true, email: true },
-    });
-    const ownerName =
-      user?.username || user?.name || user?.email?.split("@")[0] || "Manager";
-    const group = await prisma.careerGroup.create({
-      data: {
-        name: `Carrera de ${ownerName}`,
-        inviteCode: `auto-${randomBytes(8).toString("hex")}`,
-      },
-    });
+  let careerGroupId = membership?.careerGroupId ?? (await getSingletonCareerGroupId());
+
+  if (!membership) {
     await prisma.careerGroupMember.create({
       data: {
         userId,
-        careerGroupId: group.id,
-        role: "OWNER",
+        careerGroupId,
+        role: "PLAYER",
       },
     });
-    careerGroupId = group.id;
   }
 
   // 3. Crear la nueva season ACTIVE.
