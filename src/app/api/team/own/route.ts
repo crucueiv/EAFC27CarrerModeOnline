@@ -15,6 +15,9 @@ export async function GET() {
       ownClubTeamImageUrl: null,
       ownClubTeamPrimaryColor: null,
       ownClubTeamShortName: null,
+      ownClubTeamBudget: 0,
+      ownClubTeamCommittedBudget: 0,
+      ownClubTeamFreeBudget: 0,
     });
   }
   if (!prisma) {
@@ -24,6 +27,9 @@ export async function GET() {
       ownClubTeamImageUrl: null,
       ownClubTeamPrimaryColor: null,
       ownClubTeamShortName: null,
+      ownClubTeamBudget: 0,
+      ownClubTeamCommittedBudget: 0,
+      ownClubTeamFreeBudget: 0,
     });
   }
 
@@ -35,6 +41,9 @@ export async function GET() {
       ownClubTeamImageUrl: null,
       ownClubTeamPrimaryColor: null,
       ownClubTeamShortName: null,
+      ownClubTeamBudget: 0,
+      ownClubTeamCommittedBudget: 0,
+      ownClubTeamFreeBudget: 0,
     });
   }
 
@@ -45,8 +54,23 @@ export async function GET() {
       imageUrl: true,
       primaryColor: true,
       shortName: true,
+      budget: true,
     },
   });
+
+  const committedTransferFee = await prisma.transfer
+    .aggregate({
+      where: {
+        buyerTeamId: ownClubTeamId,
+        status: { in: ["PROPOSED", "ACCEPTED"] },
+        fee: { gt: 0 },
+      },
+      _sum: { fee: true },
+    })
+    .then((result) => Number(result._sum?.fee ?? 0));
+
+  const committedBudget = Math.max(0, committedTransferFee);
+  const freeBudget = Math.max(0, (team?.budget ?? 0) - committedBudget);
 
   return NextResponse.json({
     ownClubTeamId,
@@ -54,5 +78,8 @@ export async function GET() {
     ownClubTeamImageUrl: team?.imageUrl ?? null,
     ownClubTeamPrimaryColor: team?.primaryColor ?? null,
     ownClubTeamShortName: team?.shortName ?? null,
+    ownClubTeamBudget: team?.budget ?? 0,
+    ownClubTeamCommittedBudget: committedBudget,
+    ownClubTeamFreeBudget: freeBudget,
   });
 }

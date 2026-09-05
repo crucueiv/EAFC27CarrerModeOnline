@@ -36,18 +36,20 @@ type TransferPhase = "IDLE" | "CONTRACT_PENDING" | "OWN_PLAYER";
 export default function PlayerDetailModal({
   player,
   onClose,
-  userBudget = 50_000_000,
   ownClubTeamId = null,
 }: {
   player: TransferPlayerResult;
   onClose: () => void;
-  userBudget?: number;
   ownClubTeamId?: string | null;
 }) {
   const [avatarFailed, setAvatarFailed] = useState(false);
   const [scouting, setScouting] = useState<PlayerScoutingData | null>(null);
   const [loadingScouting, setLoadingScouting] = useState(true);
-  const [currentBudget, setCurrentBudget] = useState(userBudget);
+  const [budgetInfo, setBudgetInfo] = useState<{
+    total: number;
+    committed: number;
+    free: number;
+  }>({ total: 0, committed: 0, free: 0 });
   const [userTeam, setUserTeam] = useState<{
     id: string | null;
     name: string | null;
@@ -134,10 +136,14 @@ export default function PlayerDetailModal({
         ownClubTeamImageUrl?: string | null;
         ownClubTeamPrimaryColor?: string | null;
         ownClubTeamShortName?: string | null;
+        ownClubTeamBudget?: number;
+        ownClubTeamCommittedBudget?: number;
+        ownClubTeamFreeBudget?: number;
       } | null) => {
         if (cancelled) return;
         if (!data || !data.ownClubTeamId) {
           setUserTeam(null);
+          setBudgetInfo({ total: 0, committed: 0, free: 0 });
           return;
         }
         setUserTeam({
@@ -147,9 +153,17 @@ export default function PlayerDetailModal({
           primaryColor: data.ownClubTeamPrimaryColor ?? null,
           shortName: data.ownClubTeamShortName ?? null,
         });
+        setBudgetInfo({
+          total: Number(data.ownClubTeamBudget ?? 0),
+          committed: Number(data.ownClubTeamCommittedBudget ?? 0),
+          free: Number(data.ownClubTeamFreeBudget ?? 0),
+        });
       })
       .catch(() => {
-        if (!cancelled) setUserTeam(null);
+        if (!cancelled) {
+          setUserTeam(null);
+          setBudgetInfo({ total: 0, committed: 0, free: 0 });
+        }
       });
     return () => {
       cancelled = true;
@@ -249,7 +263,7 @@ export default function PlayerDetailModal({
       setActiveDialog("CLAUSE_CONFIRM");
       return;
     }
-    if (currentBudget >= player.releaseClause) {
+    if (budgetInfo.free >= player.releaseClause) {
       setActiveDialog("CLAUSE_CONFIRM");
     } else if (isHumanRival) {
       // El club no tiene suficiente dinero para pagar la cláusula: solo se permite
@@ -295,7 +309,7 @@ export default function PlayerDetailModal({
 
   const canAffordClause = isFreeAgent
     ? true
-    : currentBudget >= player.releaseClause;
+    : budgetInfo.free >= player.releaseClause;
 
   const transferButtonLabel = isFreeAgent
     ? `Iniciar negociación de contrato con ${player.name}`
@@ -434,7 +448,11 @@ export default function PlayerDetailModal({
 
       if (data.success) {
         if (data.remainingBudget !== undefined) {
-          setCurrentBudget(data.remainingBudget);
+          setBudgetInfo((prev) => ({
+            total: data.remainingBudget,
+            committed: 0,
+            free: data.remainingBudget,
+          }));
         }
         setTransferPhase("CONTRACT_PENDING");
 
@@ -499,7 +517,7 @@ export default function PlayerDetailModal({
   };
 
   const handleAgreementReached = async (agreedPrice: number) => {
-    const finalPrice = Math.min(agreedPrice, currentBudget);
+    const finalPrice = Math.min(agreedPrice, budgetInfo.free);
 
     try {
       const res = await fetch("/api/transfers/complete", {
@@ -514,7 +532,11 @@ export default function PlayerDetailModal({
 
       const data = await res.json();
       if (data.success && data.remainingBudget !== undefined) {
-        setCurrentBudget(data.remainingBudget);
+        setBudgetInfo((prev) => ({
+          total: data.remainingBudget,
+          committed: 0,
+          free: data.remainingBudget,
+        }));
       }
       if (data.success) {
         if (data.canal === "HUMAN_EMAIL") {
@@ -820,7 +842,9 @@ export default function PlayerDetailModal({
             teamPrimaryColor: player.currentTeam?.primaryColor ?? null,
             teamShortName: player.currentTeam?.shortName ?? null,
           }}
-          maxOfferLimit={currentBudget}
+          maxOfferLimit={budgetInfo.free}
+          totalBudget={budgetInfo.total}
+          committedBudget={budgetInfo.committed}
           disabled={isOwnPlayer}
           disabledReason="Este jugador ya pertenece a tu club."
           onClose={() => setActiveDialog("NONE")}
@@ -906,6 +930,9 @@ export default function PlayerDetailModal({
             schedule={loanProposalData.schedule}
             totalWageCost={loanProposalData.totalWageCost}
             loanId={loanProposalData.loanId}
+            buyerFreeBudget={budgetInfo.free}
+            buyerTotalBudget={budgetInfo.total}
+            buyerCommittedBudget={budgetInfo.committed}
             onClose={() => setActiveDialog("NONE")}
             onCompleted={() => {
               setActiveDialog("NONE");

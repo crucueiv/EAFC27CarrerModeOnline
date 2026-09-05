@@ -27,6 +27,8 @@ export interface ClubNegotiationModalProps {
   negotiationId?: string;
   initialTension?: number;
   maxOfferLimit?: number;
+  totalBudget?: number;
+  committedBudget?: number;
   disabled?: boolean;
   disabledReason?: string;
   onClose: () => void;
@@ -42,6 +44,8 @@ export const ClubNegotiationModal: React.FC<ClubNegotiationModalProps> = ({
   negotiationId,
   initialTension = 0,
   maxOfferLimit,
+  totalBudget,
+  committedBudget,
   disabled = false,
   disabledReason,
   onClose,
@@ -153,7 +157,7 @@ export const ClubNegotiationModal: React.FC<ClubNegotiationModalProps> = ({
     const offerNum = parseFloat(userOffer);
     if (isNaN(offerNum) || offerNum <= 0) return;
     if (maxOfferLimit && offerNum > maxOfferLimit) {
-      setErrorMessage(`Tu presupuesto máximo disponible es de ${maxOfferLimit.toLocaleString('es-ES')} €.`);
+      setErrorMessage(`Tu presupuesto libre (${maxOfferLimit.toLocaleString('es-ES')} €) es insuficiente para esta oferta.`);
       return;
     }
     if (offerNum < lowballThreshold) {
@@ -282,10 +286,17 @@ export const ClubNegotiationModal: React.FC<ClubNegotiationModalProps> = ({
                   <span className="absolute right-4 top-3.5 text-xs font-bold text-slate-400">EUR</span>
                 </div>
                 {maxOfferLimit ? (
-                  <p className="text-xs text-slate-400 mt-1.5 flex justify-between px-1">
-                    <span>Límite disponible:</span>
-                    <span className="font-semibold text-slate-300">{maxOfferLimit.toLocaleString('es-ES')} €</span>
-                  </p>
+                  <div className="mt-2 space-y-1 px-1">
+                    <p className="text-xs text-slate-400 flex justify-between">
+                      <span>Presupuesto libre de tu club:</span>
+                      <span className="font-semibold text-emerald-400 font-mono">{maxOfferLimit.toLocaleString('es-ES')} €</span>
+                    </p>
+                    {typeof totalBudget === "number" && typeof committedBudget === "number" ? (
+                      <p className="text-[10px] text-slate-500 flex justify-between">
+                        <span>Total: {totalBudget.toLocaleString('es-ES')} € · Comprometido: {committedBudget.toLocaleString('es-ES')} €</span>
+                      </p>
+                    ) : null}
+                  </div>
                 ) : null}
                 {errorMessage ? <p className="text-xs text-rose-400 mt-1 px-1 font-medium">{errorMessage}</p> : null}
               </div>

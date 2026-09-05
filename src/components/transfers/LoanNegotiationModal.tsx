@@ -34,6 +34,9 @@ type Props = {
   totalWageCost: number;
   weeklyWage?: number;
   loanId: string;
+  buyerFreeBudget?: number;
+  buyerTotalBudget?: number;
+  buyerCommittedBudget?: number;
   onClose: () => void;
   onCompleted: () => void;
 };
@@ -55,6 +58,9 @@ export default function LoanNegotiationModal({
   totalWageCost,
   weeklyWage = 0,
   loanId,
+  buyerFreeBudget,
+  buyerTotalBudget,
+  buyerCommittedBudget,
   onClose,
   onCompleted,
 }: Props) {
@@ -141,9 +147,21 @@ export default function LoanNegotiationModal({
       : 0;
   const currentBuyerWeekly = calculateLoanWageShare(currentWeeklyWage, proposal.wageShareBuyerPct);
   const currentTotalWage = calculateLoanWageCost(currentWeeklyWage, proposal.wageShareBuyerPct, schedule.weeks);
+  const currentBuyOptionPrice = proposal.hasBuyOption && proposal.buyOptionPrice && proposal.buyOptionPrice > 0
+    ? proposal.buyOptionPrice
+    : 0;
+  const currentLoanTotalCost = currentTotalWage + currentBuyOptionPrice;
+  const hasBudgetCap = typeof buyerFreeBudget === "number";
+  const exceedsBudget = hasBudgetCap && currentLoanTotalCost > (buyerFreeBudget as number);
 
   async function send(action: "COUNTER" | "ACCEPT" | "REJECT" | "HANGUP") {
     if (busy) return;
+    if ((action === "COUNTER" || action === "ACCEPT") && exceedsBudget) {
+      setLastManagerMessage(
+        `El coste total de la cesión (${formatEuro(currentLoanTotalCost)}) supera el presupuesto libre de tu club (${formatEuro(buyerFreeBudget as number)}). Ajusta la duración, el porcentaje de sueldo o la opción de compra.`,
+      );
+      return;
+    }
     setBusy(true);
     try {
       const res = await fetch("/api/loans/respond", {
@@ -353,10 +371,50 @@ export default function LoanNegotiationModal({
               <span className="text-slate-400">Tú pagas ({proposal.wageShareBuyerPct}%):</span>
               <strong className="font-mono text-emerald-400">{formatEuro(currentBuyerWeekly)}/sem</strong>
             </div>
-            <div className="flex items-center justify-between border-t border-slate-800 pt-1.5">
+            <div className="flex items-center justify-between">
               <span className="text-slate-400">Coste total cesión ({schedule.weeks} sem):</span>
               <strong className="font-mono text-white">{formatEuro(currentTotalWage)}</strong>
             </div>
+            {currentBuyOptionPrice > 0 ? (
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400">Opción de compra:</span>
+                <strong className="font-mono text-white">{formatEuro(currentBuyOptionPrice)}</strong>
+              </div>
+            ) : null}
+            <div className="flex items-center justify-between border-t border-slate-800 pt-1.5">
+              <span className="text-slate-400">Coste total cesión:</span>
+              <strong className={`font-mono ${exceedsBudget ? "text-rose-400" : "text-emerald-300"}`}>
+                {formatEuro(currentLoanTotalCost)}
+              </strong>
+            </div>
+            {hasBudgetCap ? (
+              <>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Presupuesto libre de tu club:</span>
+                  <strong className="font-mono text-emerald-400">{formatEuro(buyerFreeBudget as number)}</strong>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Restante tras esta cesión:</span>
+                  <strong
+                    className={`font-mono ${
+                      exceedsBudget ? "text-rose-400" : "text-slate-200"
+                    }`}
+                  >
+                    {formatEuro((buyerFreeBudget as number) - currentLoanTotalCost)}
+                  </strong>
+                </div>
+                {typeof buyerTotalBudget === "number" && typeof buyerCommittedBudget === "number" ? (
+                  <p className="text-[10px] text-slate-500 pt-1">
+                    Total: {formatEuro(buyerTotalBudget)} · Comprometido: {formatEuro(buyerCommittedBudget)}
+                  </p>
+                ) : null}
+                {exceedsBudget ? (
+                  <p className="text-[10px] text-rose-400 pt-1 font-semibold">
+                    El coste total supera el presupuesto libre de tu club. Ajusta la propuesta.
+                  </p>
+                ) : null}
+              </>
+            ) : null}
           </div>
         </div>
 
@@ -402,8 +460,9 @@ export default function LoanNegotiationModal({
             ) : (
               <button
                 onClick={() => send("COUNTER")}
-                disabled={busy}
-                className="flex-1 flex items-center justify-center gap-1.5 py-2.5 px-3 bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs rounded-xl transition"
+                disabled={busy || exceedsBudget}
+                className="flex-1 flex items-center justify-center gap-1.5 py-2.5 px-3 bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs rounded-xl transition disabled:opacity-50 disabled:cursor-not-allowed"
+                title={exceedsBudget ? "El coste total supera el presupuesto libre de tu club" : undefined}
               >
                 <Send size={14} />
                 Enviar Oferta
@@ -422,9 +481,9 @@ export default function LoanNegotiationModal({
             </button>
             <button
               onClick={() => send("ACCEPT")}
-              disabled={busy}
-              className="p-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white"
-              title="Aceptar"
+              disabled={busy || exceedsBudget}
+              className="p-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+              title={exceedsBudget ? "El coste total supera el presupuesto libre de tu club" : "Aceptar"}
               aria-label="Aceptar"
             >
               <PhoneCall size={14} />
