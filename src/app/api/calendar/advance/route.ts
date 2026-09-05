@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { canUserAdvanceToDate } from "@/domain/calendar/canUserAdvanceToDate";
 import { advanceUserToDate } from "@/lib/calendar/advanceService";
+import { deliverPendingEmailsForRecipient } from "@/lib/transfers/negotiationEmail";
 
 export const dynamic = "force-dynamic";
 
@@ -46,6 +47,15 @@ export async function POST(request: Request) {
         },
         { status: 409 },
       );
+    }
+    try {
+      await deliverPendingEmailsForRecipient({
+        receiverUserId: session.user.id,
+        recipientCurrentDate: result.newCurrentDate,
+        prismaClient: prisma,
+      });
+    } catch (emailErr) {
+      console.error("[calendar/advance] deliver pending emails failed:", emailErr);
     }
     return NextResponse.json({
       ok: true,

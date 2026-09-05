@@ -83,3 +83,8 @@ export async function assertNotOwnPlayer(input: {
   }
   return { ok: true };
 }
+
+export function isHumanManagedTeam(team: { managerId?: string | null } | null | undefined): boolean {
+  if (!team) return false;
+  return Boolean(team.managerId && team.managerId.length > 0);
+}

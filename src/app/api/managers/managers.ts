@@ -16,5 +16,9 @@ export async function getManagerAction(teamId: string): Promise<ManagerResult> {
     throw new Error(body.error ?? `getManagerAction: HTTP ${res.status}`);
   }
 
-  return (await res.json()) as ManagerResult;
+  const body = (await res.json()) as { manager?: ManagerResult };
+  if (!body.manager) {
+    throw new Error("getManagerAction: respuesta vacía del servidor");
+  }
+  return body.manager;
 }

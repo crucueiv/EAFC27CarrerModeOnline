@@ -36,7 +36,12 @@ export async function GET(request: Request) {
 
   const where = playerId ? { ...baseWhere, playerId } : baseWhere;
 
-  const [loans, negotiation] = await Promise.all([
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { clubTeamId: true },
+  });
+
+  const [loans, negotiation, outgoing] = await Promise.all([
     prisma.loan.findMany({
       where,
       orderBy: { createdAt: "desc" },
@@ -55,6 +60,21 @@ export async function GET(request: Request) {
             status: { in: [...ACTIVE_NEGOTIATION_STATUS] },
           },
           select: { id: true, status: true },
+        })
+      : Promise.resolve(null),
+    playerId && user?.clubTeamId
+      ? prisma.loan.findFirst({
+          where: {
+            playerId,
+            sellerTeamId: user.clubTeamId,
+            status: { in: ["AGREED_CLUB", "WAITING_PLAYER_CONTRACT", "COMPLETED", "BUY_OPTION_TRIGGERED"] },
+            endsAt: { gt: new Date() },
+          },
+          orderBy: { createdAt: "desc" },
+          include: {
+            sellerTeam: { select: { id: true, name: true, imageUrl: true, primaryColor: true, shortName: true } },
+            buyerTeam: { select: { id: true, name: true } },
+          },
         })
       : Promise.resolve(null),
   ]);
@@ -81,5 +101,14 @@ export async function GET(request: Request) {
     playerLoanId: playerLoan?.id ?? null,
     playerLoanStatus: playerLoan?.status ?? null,
     negotiationId: negotiation?.id ?? null,
+    outgoing: outgoing
+      ? {
+          sellerTeamName: outgoing.sellerTeam.name,
+          sellerTeamCrestUrl: outgoing.sellerTeam.imageUrl ?? null,
+          sellerTeamPrimaryColor: outgoing.sellerTeam.primaryColor ?? null,
+          sellerTeamShortName: outgoing.sellerTeam.shortName ?? null,
+          endsAtIso: outgoing.endsAt.toISOString(),
+        }
+      : null,
   });
 }

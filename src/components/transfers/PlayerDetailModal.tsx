@@ -7,6 +7,9 @@ import type { PlayerScoutingData } from "@/lib/scouting/getPlayerScoutingData";
 import PlayerOverallBadge from "@/components/players/PlayerOverallBadge";
 import { ClubNegotiationModal } from "./ClubNegotiationModal";
 import LoanNegotiationModal from "./LoanNegotiationModal";
+import { NegotiationEmailComposer } from "./NegotiationEmailComposer";
+import { HumanEmailLoanDialog } from "./HumanEmailLoanDialog";
+import type { NegotiationEmailContext } from "@/lib/transfers/emailTemplates";
 
 const statLabels = [
   ["pace", "PAC"],
@@ -45,9 +48,16 @@ export default function PlayerDetailModal({
   const [scouting, setScouting] = useState<PlayerScoutingData | null>(null);
   const [loadingScouting, setLoadingScouting] = useState(true);
   const [currentBudget, setCurrentBudget] = useState(userBudget);
+  const [userTeam, setUserTeam] = useState<{
+    id: string | null;
+    name: string | null;
+    imageUrl: string | null;
+    primaryColor: string | null;
+    shortName: string | null;
+  } | null>(null);
 
   // Modal dialog states
-  const [activeDialog, setActiveDialog] = useState<"NONE" | "CLAUSE_CONFIRM" | "NEGOTIATE" | "LOAN" | "BUYOUT_RESULT">(
+  const [activeDialog, setActiveDialog] = useState<"NONE" | "CLAUSE_CONFIRM" | "HUMAN_EMAIL" | "LOAN" | "LOAN_FORM" | "BUYOUT_RESULT">(
     "NONE"
   );
   const [buyoutResultMsg, setBuyoutResultMsg] = useState("");
@@ -55,6 +65,12 @@ export default function PlayerDetailModal({
   const [loanProposalData, setLoanProposalData] = useState<any>(null);
   const [loadingLoanProposal, setLoadingLoanProposal] = useState(false);
   const [loanError, setLoanError] = useState<string | null>(null);
+  const [humanEmailError, setHumanEmailError] = useState<string | null>(null);
+  const [humanEmailSending, setHumanEmailSending] = useState(false);
+  const [rivalManagerName, setRivalManagerName] = useState<string | null>(null);
+  const [rivalManagerAvatarUrl, setRivalManagerAvatarUrl] = useState<string | null>(null);
+
+  const isHumanRival = Boolean(player.currentTeam?.managerId);
 
   // Bloquea re-negociación con el club tras cerrar un acuerdo o pagar cláusula.
   // Solo permite abrir el diálogo de inicio de contrato (que ya no es con el club).
@@ -107,6 +123,70 @@ export default function PlayerDetailModal({
       isMounted = false;
     };
   }, [player.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/team/own")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: {
+        ownClubTeamId?: string | null;
+        ownClubTeamName?: string | null;
+        ownClubTeamImageUrl?: string | null;
+        ownClubTeamPrimaryColor?: string | null;
+        ownClubTeamShortName?: string | null;
+      } | null) => {
+        if (cancelled) return;
+        if (!data || !data.ownClubTeamId) {
+          setUserTeam(null);
+          return;
+        }
+        setUserTeam({
+          id: data.ownClubTeamId,
+          name: data.ownClubTeamName ?? null,
+          imageUrl: data.ownClubTeamImageUrl ?? null,
+          primaryColor: data.ownClubTeamPrimaryColor ?? null,
+          shortName: data.ownClubTeamShortName ?? null,
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setUserTeam(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Pre-carga el manager del club rival para que esté disponible al abrir los
+  // modales de transferencia y cesión. Sin esto, los modales arrancan con
+  // "Cargando Mánager..." y un avatar vacío hasta que hacen su propio fetch,
+  // lo que provoca parpadeos y, en algunos casos, que no se muestren los datos
+  // del manager aunque existan en la DB.
+  useEffect(() => {
+    let cancelled = false;
+    const teamId = player.currentTeam?.id;
+    if (!teamId || isFreeAgent) {
+      setRivalManagerName(null);
+      setRivalManagerAvatarUrl(null);
+      return () => {
+        cancelled = true;
+      };
+    }
+    setRivalManagerName(null);
+    setRivalManagerAvatarUrl(null);
+    fetch(`/api/managers/${encodeURIComponent(teamId)}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((mgr: { name?: string; avatarUrl?: string | null } | null) => {
+        if (cancelled || !mgr) return;
+        if (mgr.name) setRivalManagerName(mgr.name);
+        if (mgr.avatarUrl) setRivalManagerAvatarUrl(mgr.avatarUrl);
+      })
+      .catch(() => {
+        /* fallback inside modal */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [player.currentTeam?.id, isFreeAgent]);
 
   const avatar =
     player.avatarUrl ||
@@ -171,11 +251,45 @@ export default function PlayerDetailModal({
     }
     if (currentBudget >= player.releaseClause) {
       setActiveDialog("CLAUSE_CONFIRM");
-    } else {
+    } else if (isHumanRival) {
       // El club no tiene suficiente dinero para pagar la cláusula: solo se permite
-      // negociar el precio con el club vendedor. El diálogo de pago de cláusula
-      // se omite para evitar mostrar una opción inalcanzable.
-      setActiveDialog("NEGOTIATE");
+      // negociar el precio con el club vendedor. Como el rival es humano, primero
+      // creamos la negociación (POST /api/transfers/complete) y luego abrimos el
+      // dialog de correo con plantillas. Si falla, mostramos el error en el dialog.
+      setHumanEmailError(null);
+      void (async () => {
+        try {
+          const res = await fetch("/api/transfers/complete", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              playerId: player.id,
+              sellerTeamId: player.currentTeam?.id,
+              agreedPrice: 0,
+            }),
+          });
+          const data = await res.json();
+          if (!res.ok || !data.success) {
+            setHumanEmailError(data.error ?? "No se pudo preparar la negociación con el club rival.");
+            setActiveDialog("HUMAN_EMAIL");
+            return;
+          }
+          if (data.canal !== "HUMAN_EMAIL") {
+            setHumanEmailError("El club rival no está gestionado por un usuario humano.");
+            setActiveDialog("HUMAN_EMAIL");
+            return;
+          }
+          setPendingNegotiationId(data.negotiationId);
+          setActiveDialog("HUMAN_EMAIL");
+        } catch (e) {
+          console.error("[PlayerDetailModal] openHumanEmailDialog failed:", e);
+          setHumanEmailError("Error de red al preparar la negociación.");
+          setActiveDialog("HUMAN_EMAIL");
+        }
+      })();
+    } else {
+      // IA: abre directamente la negociación telefónica.
+      setActiveDialog("HUMAN_EMAIL");
     }
   };
 
@@ -194,6 +308,11 @@ export default function PlayerDetailModal({
     if (activeLoanId) {
       setLoanError("Ya tienes una cesión activa para este jugador. Revisa tu Sección de Correos para aceptarla o rechazarla.");
       setActiveDialog("NONE");
+      return;
+    }
+    if (isHumanRival && !isFreeAgent) {
+      setLoanError(null);
+      setActiveDialog("LOAN_FORM");
       return;
     }
     setActiveDialog("LOAN");
@@ -231,6 +350,67 @@ export default function PlayerDetailModal({
       } else {
         setLoanProposalData(data);
       }
+    } catch {
+      setLoadingLoanProposal(false);
+      setLoanError("Ocurrió un error al intentar iniciar las negociaciones de cesión.");
+    }
+  };
+
+  const handleSendHumanLoan = async (args: {
+    duration: "SHORT_TERM" | "ONE_YEAR" | "TWO_YEARS";
+    wageShareBuyerPct: number;
+    hasBuyOption: boolean;
+    buyOptionPrice: number | null;
+  }) => {
+    setLoadingLoanProposal(true);
+    setLoanError(null);
+    try {
+      const res = await fetch("/api/loans/propose", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          playerId: player.id,
+          duration: args.duration,
+          wageShareBuyerPct: args.wageShareBuyerPct,
+          hasBuyOption: args.hasBuyOption,
+          buyOptionPrice: args.buyOptionPrice,
+        }),
+      });
+      const data = await res.json();
+      setLoadingLoanProposal(false);
+      if (data.error) {
+        if (data.error === "loan-already-active") {
+          setActiveLoanId(data.loanId ?? null);
+          setActiveLoanStatus(data.status ?? null);
+          setLoanError(
+            data.reason || "Ya tienes una cesión activa para este jugador.",
+          );
+          setActiveDialog("NONE");
+          return;
+        }
+        setLoanError(
+          data.reason ||
+            (data.error === "transfer-window-closed"
+              ? "El mercado de fichajes está cerrado."
+              : `Error al solicitar cesión: ${data.error}`),
+        );
+        return;
+      }
+      if (data.canal === "HUMAN_EMAIL") {
+        setTransferPhase("CONTRACT_PENDING");
+        setBuyoutResultMsg(
+          `Correo enviado a ${sellerTeamName} con tu propuesta de cesión. Espera su respuesta en tu Sección de Correos.`,
+        );
+        setActiveDialog("BUYOUT_RESULT");
+        return;
+      }
+      if (data.ineligible) {
+        setLoanProposalData(data);
+        setActiveDialog("LOAN");
+        return;
+      }
+      setLoanProposalData(data);
+      setActiveDialog("LOAN");
     } catch {
       setLoadingLoanProposal(false);
       setLoanError("Ocurrió un error al intentar iniciar las negociaciones de cesión.");
@@ -280,7 +460,42 @@ export default function PlayerDetailModal({
       setActiveDialog("NONE");
       return;
     }
-    setActiveDialog("NEGOTIATE");
+    if (isHumanRival) {
+      // Reutilizamos la misma lógica inline para abrir el flujo de correo.
+      setHumanEmailError(null);
+      void (async () => {
+        try {
+          const res = await fetch("/api/transfers/complete", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              playerId: player.id,
+              sellerTeamId: player.currentTeam?.id,
+              agreedPrice: 0,
+            }),
+          });
+          const data = await res.json();
+          if (!res.ok || !data.success) {
+            setHumanEmailError(data.error ?? "No se pudo preparar la negociación con el club rival.");
+            setActiveDialog("HUMAN_EMAIL");
+            return;
+          }
+          if (data.canal !== "HUMAN_EMAIL") {
+            setHumanEmailError("El club rival no está gestionado por un usuario humano.");
+            setActiveDialog("HUMAN_EMAIL");
+            return;
+          }
+          setPendingNegotiationId(data.negotiationId);
+          setActiveDialog("HUMAN_EMAIL");
+        } catch (e) {
+          console.error("[PlayerDetailModal] openHumanEmailDialog failed:", e);
+          setHumanEmailError("Error de red al preparar la negociación.");
+          setActiveDialog("HUMAN_EMAIL");
+        }
+      })();
+    } else {
+      setActiveDialog("HUMAN_EMAIL");
+    }
   };
 
   const handleAgreementReached = async (agreedPrice: number) => {
@@ -302,6 +517,14 @@ export default function PlayerDetailModal({
         setCurrentBudget(data.remainingBudget);
       }
       if (data.success) {
+        if (data.canal === "HUMAN_EMAIL") {
+          setTransferPhase("CONTRACT_PENDING");
+          setBuyoutResultMsg(
+            `Correo enviado a ${sellerTeamName} con tu oferta de traspaso. Cuando el club rival responda, recibirás la confirmación en tu Sección de Correos.`
+          );
+          setActiveDialog("BUYOUT_RESULT");
+          return;
+        }
         setTransferPhase("CONTRACT_PENDING");
         setBuyoutResultMsg(
           `Acuerdo de traspaso alcanzado con ${sellerTeamName}. Se ha enviado una notificación a tu Sección de Correos para iniciar la negociación de contrato con el jugador.`
@@ -312,6 +535,43 @@ export default function PlayerDetailModal({
       console.error("Error al completar el traspaso:", error);
     }
   };
+
+  const handleSendHumanEmail = async (args: { oferta: { dinero: number; jugadoresOfrecidos: string[] } }) => {
+    if (!player.currentTeam?.managerId) {
+      setHumanEmailError("El club rival no está gestionado por un usuario humano.");
+      return;
+    }
+    setHumanEmailSending(true);
+    setHumanEmailError(null);
+    try {
+      const res = await fetch("/api/transfers/email/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          negotiationId: pendingNegotiationId,
+          receiverUserId: player.currentTeam.managerId,
+          oferta: args.oferta,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setHumanEmailError(data.error ?? "No se pudo enviar el correo.");
+        return;
+      }
+      setTransferPhase("CONTRACT_PENDING");
+      setBuyoutResultMsg(
+        `Correo enviado a ${sellerTeamName} con tu oferta. Espera la respuesta del club rival en tu Sección de Correos.`
+      );
+      setActiveDialog("BUYOUT_RESULT");
+    } catch (e) {
+      console.error("[PlayerDetailModal] human email send failed:", e);
+      setHumanEmailError("Error de red al enviar el correo.");
+    } finally {
+      setHumanEmailSending(false);
+    }
+  };
+
+  const [pendingNegotiationId, setPendingNegotiationId] = useState<string | null>(null);
 
   const loanLabel = isFreeAgent
     ? "Cesión no disponible para agentes libres"
@@ -527,20 +787,65 @@ export default function PlayerDetailModal({
         </div>
       )}
 
-      {/* Sub-Modal: Modal Telefónico de Negociación */}
-      {activeDialog === "NEGOTIATE" && (
+      {/* Sub-Modal: Modal Telefónico de Negociación (IA) o Correo (Humano) */}
+      {activeDialog === "HUMAN_EMAIL" && isHumanRival && (
+        <HumanEmailTransferDialog
+          context={{
+            playerName: player.name,
+            sourceTeamName: userTeam?.name ?? "Tu club",
+            targetTeamName: sellerTeamName,
+            amount: "",
+            counterparties: [],
+            kind: "TRANSFER",
+            senderName: userTeam?.name ?? "Tu club",
+          }}
+          onCancel={() => setActiveDialog("NONE")}
+          onSend={async ({ oferta }) => {
+            await handleSendHumanEmail({ oferta });
+          }}
+          sending={humanEmailSending}
+          errorMessage={humanEmailError}
+        />
+      )}
+      {activeDialog === "HUMAN_EMAIL" && !isHumanRival && (
         <ClubNegotiationModal
           isOpen={true}
           player={{
             ...player,
             teamId: player.currentTeam?.id,
             teamName: sellerTeamName,
+            managerName: rivalManagerName ?? undefined,
+            managerAvatarUrl: rivalManagerAvatarUrl ?? undefined,
+            teamCrestUrl: player.currentTeam?.imageUrl ?? null,
+            teamPrimaryColor: player.currentTeam?.primaryColor ?? null,
+            teamShortName: player.currentTeam?.shortName ?? null,
           }}
           maxOfferLimit={currentBudget}
           disabled={isOwnPlayer}
           disabledReason="Este jugador ya pertenece a tu club."
           onClose={() => setActiveDialog("NONE")}
           onAgreementReached={handleAgreementReached}
+        />
+      )}
+
+      {/* Sub-Modal: Formulario de cesión para club rival humano */}
+      {activeDialog === "LOAN_FORM" && isHumanRival && (
+        <HumanEmailLoanDialog
+          context={{
+            playerName: player.name,
+            sourceTeamName: userTeam?.name ?? "Tu club",
+            targetTeamName: sellerTeamName,
+            amount: "0",
+            counterparties: [],
+            kind: "LOAN",
+            senderName: userTeam?.name ?? "Tu club",
+          }}
+          onCancel={() => setActiveDialog("NONE")}
+          onSend={async (args) => {
+            await handleSendHumanLoan(args);
+          }}
+          sending={loadingLoanProposal}
+          errorMessage={loanError}
         />
       )}
 
@@ -567,12 +872,36 @@ export default function PlayerDetailModal({
               </button>
             </div>
           </div>
+        ) : loanProposalData?.canal === "HUMAN_EMAIL" ? (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
+            <div className="w-full max-w-md rounded-2xl border border-emerald-500/30 bg-[var(--theme-card)] p-6 shadow-2xl space-y-4 text-center">
+              <h4 className="text-lg font-bold text-emerald-400">Correo enviado a {sellerTeamName}</h4>
+              <p className="text-sm text-[var(--theme-muted)]">
+                Has enviado una propuesta de cesión por <strong>{player.name}</strong> al club rival. Espera su respuesta en tu Sección de Correos.
+              </p>
+              <button
+                onClick={() => {
+                  setActiveDialog("NONE");
+                  setLoanProposalData(null);
+                  onClose();
+                }}
+                className="mt-3 rounded-xl bg-emerald-600 py-2.5 px-6 font-bold text-white hover:bg-emerald-700"
+              >
+                Entendido
+              </button>
+            </div>
+          </div>
         ) : loanProposalData ? (
           <LoanNegotiationModal
             open={true}
             playerName={player.name}
             sellerTeamName={sellerTeamName}
             sellerTeamId={player.currentTeam?.id}
+            sellerTeamCrestUrl={player.currentTeam?.imageUrl ?? null}
+            sellerTeamPrimaryColor={player.currentTeam?.primaryColor ?? null}
+            sellerTeamShortName={player.currentTeam?.shortName ?? null}
+            managerName={rivalManagerName ?? undefined}
+            managerAvatarUrl={rivalManagerAvatarUrl ?? undefined}
             initialMessage={loanProposalData.greeting}
             schedule={loanProposalData.schedule}
             totalWageCost={loanProposalData.totalWageCost}
@@ -608,6 +937,72 @@ export default function PlayerDetailModal({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function HumanEmailTransferDialog({
+  context,
+  onCancel,
+  onSend,
+  sending,
+  errorMessage,
+}: {
+  context: NegotiationEmailContext;
+  onCancel: () => void;
+  onSend: (args: { oferta: { dinero: number; jugadoresOfrecidos: string[] } }) => Promise<void> | void;
+  sending: boolean;
+  errorMessage: string | null;
+}) {
+  const [ofertaDinero, setOfertaDinero] = useState<string>("");
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-md rounded-2xl border border-[var(--theme-border)] bg-[var(--theme-card)] p-6 shadow-2xl space-y-4">
+        <h4 className="text-lg font-bold text-[var(--theme-foreground)]">
+          Enviar oferta a {context.targetTeamName}
+        </h4>
+        <p className="text-xs text-[var(--theme-muted)]">
+          Estás negociando con un club gestionado por otra persona. Redacta tu oferta y envíala por correo.
+        </p>
+        <label className="block text-[11px] font-bold uppercase text-slate-400">
+          Importe (€)
+        </label>
+        <input
+          type="number"
+          min={0}
+          step={100000}
+          value={ofertaDinero}
+          onChange={(e) => setOfertaDinero(e.target.value)}
+          className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white"
+          placeholder="Ej. 15000000"
+        />
+        <NegotiationEmailComposer
+          context={{
+            ...context,
+            amount: ofertaDinero || "0",
+            counterparties: [],
+            senderName: "Tu club",
+          }}
+          onSend={async () => {
+            const dinero = Number.parseInt(ofertaDinero, 10) || 0;
+            await onSend({ oferta: { dinero, jugadoresOfrecidos: [] } });
+          }}
+          disabled={sending}
+        />
+        {errorMessage ? (
+          <p className="text-xs text-rose-400">{errorMessage}</p>
+        ) : null}
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={sending}
+            className="rounded-lg bg-slate-700 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-600 disabled:opacity-50"
+          >
+            Cancelar
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -26,7 +26,7 @@ export const demoTransferPlayers = [
     defending: 38,
     physical: 74,
     marketValue: 18000000,
-    currentTeam: { id: "northbridge", eaId: null, name: "Northbridge FC", shortName: "NBR", imageUrl: null, league: { id: "demo-league", name: "Demo Premier League", imageUrl: null, eaId: null } },
+    currentTeam: { id: "northbridge", eaId: null, name: "Northbridge FC", shortName: "NBR", imageUrl: null, primaryColor: null, managerId: null, league: { id: "demo-league", name: "Demo Premier League", imageUrl: null, eaId: null } },
     nationality: { id: "usa", name: "United States", code: "US", flagUrl: null }
   },
   {
@@ -44,7 +44,7 @@ export const demoTransferPlayers = [
     defending: 65,
     physical: 70,
     marketValue: 8500000,
-    currentTeam: { id: "riverside", eaId: null, name: "Riverside Athletic", shortName: "RSA", imageUrl: null, league: { id: "demo-league", name: "Demo Premier League", imageUrl: null, eaId: null } },
+    currentTeam: { id: "riverside", eaId: null, name: "Riverside Athletic", shortName: "RSA", imageUrl: null, primaryColor: null, managerId: null, league: { id: "demo-league", name: "Demo Premier League", imageUrl: null, eaId: null } },
     nationality: { id: "gb", name: "United Kingdom", code: "GB", flagUrl: null }
   },
   {
@@ -62,7 +62,7 @@ export const demoTransferPlayers = [
     defending: 86,
     physical: 82,
     marketValue: 5000000,
-    currentTeam: { id: "free-agents", eaId: "FREE_AGENTS", name: "Agentes Libres", shortName: "AGENT", imageUrl: "https://www.fifacm.com/content/media/imgs/fifa21/teams/256/l111592.png", league: null },
+    currentTeam: { id: "free-agents", eaId: "FREE_AGENTS", name: "Agentes Libres", shortName: "AGENT", imageUrl: "https://www.fifacm.com/content/media/imgs/fifa21/teams/256/l111592.png", primaryColor: null, managerId: null, league: null },
     nationality: { id: "de", name: "Germany", code: "DE", flagUrl: null }
   }
 ];

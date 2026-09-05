@@ -54,6 +54,8 @@ export type TransferPlayerResult = {
     name: string;
     shortName: string;
     imageUrl: string | null;
+    primaryColor: string | null;
+    managerId: string | null;
     league: { id: string; name: string; imageUrl: string | null; eaId: string | null } | null;
   } | null;
   isLoanEligible?: boolean;
@@ -223,6 +225,8 @@ type SearchPlayer = Player & {
       name: string;
       shortName: string;
       imageUrl: string | null;
+      primaryColor: string | null;
+      managerId: string | null;
       league: { id: string; name: string; imageUrl: string | null; eaId: string | null } | null;
     };
   }>;
@@ -287,6 +291,8 @@ function serializePlayer(player: SearchPlayer): TransferPlayerResult {
           name: currentTeam.name,
           shortName: currentTeam.shortName,
           imageUrl: currentTeam.imageUrl,
+          primaryColor: currentTeam.primaryColor,
+          managerId: currentTeam.managerId,
           league: currentTeam.league
             ? {
                 id: currentTeam.league.id,

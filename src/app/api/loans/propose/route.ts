@@ -10,7 +10,7 @@ import {
   calculateLoanWageCost,
   calculateLoanWageShare,
 } from "@/lib/transfers/loanEngine";
-import { getRandomLoanQuote, formatEuro } from "@/lib/transfers/loanNegotiationEngine";
+import { getRandomLoanQuote, formatEuro, resolveSellerManagerName } from "@/lib/transfers/loanNegotiationEngine";
 import type { LoanDuration } from "@/lib/transfers/loanNegotiationEngine";
 import { getSimulatedCurrentDate } from "@/lib/calendar/simulatedClock";
 import { resolveActiveWindow, type TransferWindowSnapshot } from "@/lib/calendar/transferWindowResolver";
@@ -19,7 +19,8 @@ import {
   pureBuildWinterWindow,
 } from "@/lib/calendar/transferWindowResolver";
 import { getOrCreateActiveSeason } from "@/lib/seasons";
-import { assertNotOwnPlayer } from "@/lib/transfers/ownership";
+import { assertNotOwnPlayer, isHumanManagedTeam } from "@/lib/transfers/ownership";
+import { sendNegotiationEmail } from "@/lib/transfers/negotiationEmail";
 import { calculatePlayerValueAndClause } from "@/lib/transfers/pricingEngine";
 
 type Body = {
@@ -70,7 +71,15 @@ export async function POST(request: Request) {
 
   const roster = await prisma.roster.findFirst({
     where: { playerId: body.playerId, isActive: true },
-    include: { team: true, player: true },
+    include: {
+      team: {
+        include: {
+          manager: { select: { name: true, image: true } },
+          managerProfile: { select: { name: true, avatarUrl: true } },
+        },
+      },
+      player: true,
+    },
   });
   if (!roster) return NextResponse.json({ error: "no-roster" }, { status: 400 });
   const sellerTeam = roster.team;
@@ -96,11 +105,92 @@ export async function POST(request: Request) {
   }
 
   const eligibility = await canPlayerBeLoanedOut(body.playerId, sellerTeam.id);
+  const sellerManagerName = resolveSellerManagerName(sellerTeam);
+
   if (!eligibility.eligible) {
-    return NextResponse.json(
-      { error: "ineligible", reason: eligibility.reason },
-      { status: 400 },
-    );
+    const windowOpensAt = simulatedNow;
+    const isHumanRejected = isHumanManagedTeam(sellerTeam);
+    const negotiation = await prisma.negotiation.create({
+      data: {
+        playerId: body.playerId,
+        buyerTeamId: userTeam.id,
+        sellerTeamId: sellerTeam.id,
+        buyerId: userId,
+        sellerId: isHumanRejected ? sellerTeam.managerId : null,
+        seasonId: season.id,
+        type: "LOAN_SHORT_TERM",
+        status: "REJECTED",
+        canal: isHumanRejected ? "HUMAN_EMAIL" : "AI_CALL",
+        agreedPrice: 0,
+        buyoutOptionPrice: null,
+        sellerSalaryPercent: 100,
+        buyerSalaryPercent: 0,
+        offeredWage: 0,
+        effectiveDate: windowOpensAt,
+        windowOpensAt,
+        decidedAt: windowOpensAt,
+        tension: 100,
+      },
+    });
+
+    const loan = await prisma.loan.create({
+      data: {
+        seasonId: season.id,
+        playerId: body.playerId,
+        sellerTeamId: sellerTeam.id,
+        buyerTeamId: userTeam.id,
+        buyerId: userId,
+        duration: body.duration,
+        wageShareBuyerPct: body.wageShareBuyerPct,
+        hasBuyOption: body.hasBuyOption,
+        buyOptionPrice: body.hasBuyOption ? body.buyOptionPrice ?? null : null,
+        startsAt: windowOpensAt,
+        endsAt: windowOpensAt,
+        status: "REJECTED",
+        metadata: {
+          negotiationId: negotiation.id,
+          currentTension: 100,
+          ineligible: true,
+          ineligibilityReason: eligibility.reason ?? null,
+          proposedDuration: body.duration,
+          proposedWageShareBuyerPct: body.wageShareBuyerPct,
+          proposedHasBuyOption: body.hasBuyOption,
+          proposedBuyOptionPrice: body.hasBuyOption ? body.buyOptionPrice ?? null : null,
+          acceptedDuration: null,
+          acceptedWageShareBuyerPct: null,
+          acceptedHasBuyOption: null,
+          acceptedBuyOptionPrice: null,
+        },
+        negotiationId: negotiation.id,
+      },
+    });
+
+    const message = getRandomLoanQuote("notInterested", {
+      player: roster.player.name,
+      seller: sellerTeam.name,
+      manager: sellerManagerName ?? undefined,
+    });
+
+    return NextResponse.json({
+      loanId: loan.id,
+      negotiationId: negotiation.id,
+      canal: isHumanRejected ? "HUMAN_EMAIL" : "AI_CALL",
+      ineligible: true,
+      ineligibilityReason: eligibility.reason ?? null,
+      greeting: message,
+      schedule: { startsAt: windowOpensAt, endsAt: windowOpensAt, weeks: 0 },
+      totalWageCost: 0,
+      weeklyWage: 0,
+      buyerWeeklyWageCost: 0,
+      wageShareBuyerPct: body.wageShareBuyerPct,
+      formatted: {
+        wageShareBuyerPct: body.wageShareBuyerPct,
+        weeklyWage: formatEuro(0),
+        buyerWeeklyWage: formatEuro(0),
+        totalWageCost: formatEuro(0),
+        buyOptionPrice: body.buyOptionPrice ? formatEuro(body.buyOptionPrice) : null,
+      },
+    });
   }
 
   if (body.wageShareBuyerPct < 20 || body.wageShareBuyerPct > 80) {
@@ -157,16 +247,18 @@ export async function POST(request: Request) {
   }
 
   const windowOpensAt: Date = windowState.kind === "WITHIN" ? simulatedNow : windowState.next.opensAt;
+  const isHuman = isHumanManagedTeam(sellerTeam);
   const negotiation = await prisma.negotiation.create({
     data: {
       playerId: body.playerId,
       buyerTeamId: userTeam.id,
       sellerTeamId: sellerTeam.id,
       buyerId: userId,
-      sellerId: null,
+      sellerId: isHuman ? sellerTeam.managerId : null,
       seasonId: season.id,
       type: transferType,
       status: "PENDING_AGREEMENT",
+      canal: isHuman ? "HUMAN_EMAIL" : "AI_CALL",
       agreedPrice: 0,
       buyoutOptionPrice: body.hasBuyOption ? body.buyOptionPrice ?? null : null,
       sellerSalaryPercent: 100 - body.wageShareBuyerPct,
@@ -210,9 +302,49 @@ export async function POST(request: Request) {
     },
   });
 
+  if (isHuman && sellerTeam.managerId) {
+    let emailId: string | null = null;
+    try {
+      const result = await sendNegotiationEmail({
+        negotiationId: negotiation.id,
+        senderUserId: userId,
+        receiverUserId: sellerTeam.managerId,
+        oferta: {
+          dinero: 0,
+          jugadoresOfrecidos: [],
+        },
+        simulatedSentAt: simulatedNow,
+        prismaClient: prisma,
+        kind: "LOAN",
+      });
+      emailId = result.emailId;
+    } catch (e) {
+      console.error("[loans/propose] human email send failed:", e);
+    }
+    return NextResponse.json({
+      loanId: loan.id,
+      negotiationId: negotiation.id,
+      canal: "HUMAN_EMAIL",
+      emailId,
+      schedule: { startsAt, endsAt, weeks },
+      totalWageCost,
+      weeklyWage,
+      buyerWeeklyWageCost,
+      wageShareBuyerPct: body.wageShareBuyerPct,
+      formatted: {
+        wageShareBuyerPct: body.wageShareBuyerPct,
+        weeklyWage: formatEuro(weeklyWage),
+        buyerWeeklyWage: formatEuro(buyerWeeklyWageCost),
+        totalWageCost: formatEuro(totalWageCost),
+        buyOptionPrice: body.buyOptionPrice ? formatEuro(body.buyOptionPrice) : null,
+      },
+    });
+  }
+
   const greeting = getRandomLoanQuote("greeting", {
     player: roster.player.name,
     seller: sellerTeam.name,
+    manager: sellerManagerName ?? undefined,
   });
 
   return NextResponse.json({

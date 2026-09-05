@@ -6,6 +6,7 @@ import type { TransferPlayerResult } from "@/lib/transfers/search";
 import PlayerDetailModal from "@/components/transfers/PlayerDetailModal";
 import LoanNegotiationModal from "@/components/transfers/LoanNegotiationModal";
 import PlayerOverallBadge from "@/components/players/PlayerOverallBadge";
+import { LoanedPlayerBadge } from "@/components/transfers/LoanedPlayerBadge";
 
 const statLabels = [
   ["pace", "PAC"],
@@ -42,9 +43,19 @@ export default function PlayerCardRow({ player, ownClubTeamId }: { player: Trans
     weeklyWage: number;
     buyerWeeklyWageCost: number;
   } | null>(null);
+  const [managerName, setManagerName] = useState<string | null>(null);
+  const [managerAvatarUrl, setManagerAvatarUrl] = useState<string | null>(null);
   const [loanBusy, setLoanBusy] = useState(false);
   const [loanError, setLoanError] = useState<string | null>(null);
+  const [loanInfo, setLoanInfo] = useState<string | null>(null);
   const [activeLoanId, setActiveLoanId] = useState<string | null>(null);
+  const [outgoingLoan, setOutgoingLoan] = useState<{
+    sellerTeamName: string;
+    sellerTeamCrestUrl: string | null;
+    sellerTeamPrimaryColor: string | null;
+    sellerTeamShortName: string | null;
+    endsAtIso: string;
+  } | null>(null);
 
   const isOwnPlayer = Boolean(
     ownClubTeamId && player.currentTeam?.id === ownClubTeamId,
@@ -59,10 +70,13 @@ export default function PlayerCardRow({ player, ownClubTeamId }: { player: Trans
     const params = new URLSearchParams({ playerId: player.id });
     fetch(`/api/loans/active?${params.toString()}`)
       .then((res) => (res.ok ? res.json() : null))
-      .then((data: { hasActiveForPlayer?: boolean; playerLoanId?: string | null } | null) => {
+      .then((data: { hasActiveForPlayer?: boolean; playerLoanId?: string | null; outgoing?: typeof outgoingLoan } | null) => {
         if (cancelled) return;
         if (data?.hasActiveForPlayer) {
           setActiveLoanId(data.playerLoanId ?? null);
+        }
+        if (data?.outgoing) {
+          setOutgoingLoan(data.outgoing);
         }
       })
       .catch(() => {
@@ -84,6 +98,7 @@ export default function PlayerCardRow({ player, ownClubTeamId }: { player: Trans
     }
     setLoanBusy(true);
     setLoanError(null);
+    setLoanInfo(null);
     try {
       const res = await fetch("/api/loans/propose", {
         method: "POST",
@@ -104,17 +119,64 @@ export default function PlayerCardRow({ player, ownClubTeamId }: { player: Trans
       }
       if (data.error) {
         setLoanError(data.error);
-      } else {
+        return;
+      }
+
+      if (data.ineligible) {
+        if (player.currentTeam?.id) {
+          try {
+            const mgrRes = await fetch(`/api/managers/${encodeURIComponent(player.currentTeam.id)}`);
+            if (mgrRes.ok) {
+              const mgr = await mgrRes.json();
+              setManagerName(mgr.name ?? null);
+              setManagerAvatarUrl(mgr.avatarUrl ?? null);
+            }
+          } catch {
+            /* fallback inside modal */
+          }
+        }
         setLoanInit({
           loanId: data.loanId,
           greeting: data.greeting,
-          schedule: data.schedule,
-          totalWageCost: data.totalWageCost,
+          schedule: data.schedule ?? { startsAt: new Date().toISOString(), endsAt: new Date().toISOString(), weeks: 0 },
+          totalWageCost: data.totalWageCost ?? 0,
           weeklyWage: data.weeklyWage ?? 0,
           buyerWeeklyWageCost: data.buyerWeeklyWageCost ?? 0,
         });
         setIsLoanModalOpen(true);
+        return;
       }
+
+      if (data.canal === "HUMAN_EMAIL") {
+        setLoanInfo(
+          `Correo enviado a ${player.currentTeam?.name ?? "club rival"} con tu propuesta de cesión. Espera su respuesta en tu Sección de Correos.`,
+        );
+        setLoanError(null);
+        if (data.loanId) setActiveLoanId(data.loanId);
+        return;
+      }
+
+      if (player.currentTeam?.id) {
+        try {
+          const mgrRes = await fetch(`/api/managers/${encodeURIComponent(player.currentTeam.id)}`);
+          if (mgrRes.ok) {
+            const mgr = await mgrRes.json();
+            setManagerName(mgr.name ?? null);
+            setManagerAvatarUrl(mgr.avatarUrl ?? null);
+          }
+        } catch {
+          /* fallback inside modal */
+        }
+      }
+      setLoanInit({
+        loanId: data.loanId,
+        greeting: data.greeting,
+        schedule: data.schedule,
+        totalWageCost: data.totalWageCost,
+        weeklyWage: data.weeklyWage ?? 0,
+        buyerWeeklyWageCost: data.buyerWeeklyWageCost ?? 0,
+      });
+      setIsLoanModalOpen(true);
     } finally {
       setLoanBusy(false);
     }
@@ -151,6 +213,15 @@ export default function PlayerCardRow({ player, ownClubTeamId }: { player: Trans
         <div className="min-w-0">
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
             <h2 className="text-lg font-semibold text-[var(--theme-foreground)] transition group-hover:text-emerald-600">{player.name}</h2>
+            {outgoingLoan ? (
+              <LoanedPlayerBadge
+                sellerTeamName={outgoingLoan.sellerTeamName}
+                sellerTeamCrestUrl={outgoingLoan.sellerTeamCrestUrl}
+                sellerTeamPrimaryColor={outgoingLoan.sellerTeamPrimaryColor}
+                sellerTeamShortName={outgoingLoan.sellerTeamShortName}
+                endsAtIso={outgoingLoan.endsAtIso}
+              />
+            ) : null}
             <span className="rounded bg-[var(--theme-background)] px-2 py-0.5 text-xs font-semibold text-[var(--theme-muted)]">{player.position}</span>
             <span className="font-semibold text-emerald-600">{formatPrice(player.price)}</span>
             <span className="text-xs font-medium text-[var(--theme-muted)]">{formatSalary(player.salary)}</span>
@@ -221,6 +292,11 @@ export default function PlayerCardRow({ player, ownClubTeamId }: { player: Trans
                   {loanError}
                 </div>
               )}
+              {loanInfo && !loanError && (
+                <div className="mt-1 max-w-[10rem] text-[10px] text-emerald-700">
+                  {loanInfo}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -239,6 +315,11 @@ export default function PlayerCardRow({ player, ownClubTeamId }: { player: Trans
           playerName={player.name}
           sellerTeamName={player.currentTeam.name}
           sellerTeamId={player.currentTeam.id}
+          sellerTeamCrestUrl={player.currentTeam.imageUrl ?? null}
+          sellerTeamPrimaryColor={player.currentTeam.primaryColor ?? null}
+          sellerTeamShortName={player.currentTeam.shortName ?? null}
+          managerName={managerName ?? undefined}
+          managerAvatarUrl={managerAvatarUrl ?? undefined}
           initialMessage={loanInit.greeting}
           schedule={loanInit.schedule}
           totalWageCost={loanInit.totalWageCost}

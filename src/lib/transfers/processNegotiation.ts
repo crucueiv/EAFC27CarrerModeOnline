@@ -5,6 +5,8 @@ import type {
   Loan,
   Negotiation,
   Team,
+  NegotiationChannel,
+  NegotiationCooldownReason,
 } from "@prisma/client";
 import { prisma as defaultPrisma } from "@/lib/prisma";
 import { withSerializableTransaction } from "@/lib/calendar/calendarDb";
@@ -21,11 +23,21 @@ import {
   type NegotiationComparable,
   type TransferType,
 } from "@/lib/transfers/resolveTransferConflicts";
+import {
+  type Oferta,
+  type OfferPlayerContext,
+  computeCooldownExpiry,
+  effectiveReleaseClause,
+  isCooldownActive,
+  valorTotalOferta,
+} from "@/lib/transfers/negotiationRules";
 
 export type ProcessNegotiationInput = {
   negotiationId: string;
   simulatedNow: Date;
   prismaClient?: PrismaClient;
+  oferta?: Oferta;
+  canal?: NegotiationChannel;
 };
 
 export type ProcessNegotiationSuccess = {
@@ -56,8 +68,10 @@ export type ProcessNegotiationFailure = {
     | "SAME_TEAM"
     | "INSUFFICIENT_FUNDS"
     | "WINDOW_NOT_AVAILABLE"
+    | "COOLDOWN_ACTIVE"
     | "PRISMA_ERROR";
   message: string;
+  retryAt?: Date;
 };
 
 export type ProcessNegotiationResult =
@@ -78,6 +92,87 @@ function safeFloat(value: unknown, fallback: number): number {
     return Number.isFinite(parsed) ? parsed : fallback;
   }
   return fallback;
+}
+
+export async function recordPlayerContractRejectionCooldown(args: {
+  prisma: PrismaClient;
+  negotiationId: string;
+  simulatedNow: Date;
+}): Promise<{ ok: true; cooldownId: string; expiresAt: Date } | { ok: false; reason: string }> {
+  const negotiation = await args.prisma.negotiation.findUnique({
+    where: { id: args.negotiationId },
+    select: { id: true, buyerTeamId: true, sellerTeamId: true, playerId: true },
+  });
+  if (!negotiation) return { ok: false, reason: "NEGOTIATION_NOT_FOUND" };
+  const r = await recordCooldown({
+    prisma: args.prisma,
+    buyerTeamId: negotiation.buyerTeamId,
+    sellerTeamId: negotiation.sellerTeamId,
+    playerId: negotiation.playerId,
+    reason: "PLAYER_CONTRACT_REJECTED",
+    startsAt: args.simulatedNow,
+    negotiationId: negotiation.id,
+  });
+  return { ok: true, cooldownId: r.cooldownId, expiresAt: r.expiresAt };
+}
+
+export async function recordManagerRejectionCooldown(args: {
+  prisma: PrismaClient;
+  negotiationId: string;
+  simulatedNow: Date;
+}): Promise<{ ok: true; cooldownId: string; expiresAt: Date } | { ok: false; reason: string }> {
+  const negotiation = await args.prisma.negotiation.findUnique({
+    where: { id: args.negotiationId },
+    select: { id: true, buyerTeamId: true, sellerTeamId: true, playerId: true },
+  });
+  if (!negotiation) return { ok: false, reason: "NEGOTIATION_NOT_FOUND" };
+  const r = await recordCooldown({
+    prisma: args.prisma,
+    buyerTeamId: negotiation.buyerTeamId,
+    sellerTeamId: negotiation.sellerTeamId,
+    playerId: negotiation.playerId,
+    reason: "MANAGER_REJECTED",
+    startsAt: args.simulatedNow,
+    negotiationId: negotiation.id,
+  });
+  return { ok: true, cooldownId: r.cooldownId, expiresAt: r.expiresAt };
+}
+
+export async function recordCooldown(args: {
+  prisma: PrismaClient | Prisma.TransactionClient;
+  buyerTeamId: string;
+  sellerTeamId: string;
+  playerId: string;
+  reason: NegotiationCooldownReason;
+  startsAt: Date;
+  negotiationId?: string;
+}): Promise<{ cooldownId: string; expiresAt: Date }> {
+  const expiresAt = computeCooldownExpiry(args.startsAt);
+  const cooldown = await args.prisma.negotiationCooldown.upsert({
+    where: {
+      buyerTeamId_sellerTeamId_playerId_reason: {
+        buyerTeamId: args.buyerTeamId,
+        sellerTeamId: args.sellerTeamId,
+        playerId: args.playerId,
+        reason: args.reason,
+      },
+    },
+    create: {
+      buyerTeamId: args.buyerTeamId,
+      sellerTeamId: args.sellerTeamId,
+      playerId: args.playerId,
+      reason: args.reason,
+      startsAt: args.startsAt,
+      expiresAt,
+      negotiationId: args.negotiationId ?? null,
+    },
+    update: {
+      startsAt: args.startsAt,
+      expiresAt,
+      negotiationId: args.negotiationId ?? null,
+    },
+  });
+  return { cooldownId: cooldown.id, expiresAt };
 }
 
 function isNegotiationDecided(status: string): boolean {
@@ -101,7 +196,7 @@ function mapTypeToLoanDuration(
     case "LOAN_1_YEAR":
       return "ONE_YEAR";
     case "LOAN_2_YEARS":
-      return "TWO_YEAR" as never;
+      return "TWO_YEARS";
     default:
       throw new Error(`mapTypeToLoanDuration: invalid type ${type}`);
   }
@@ -235,6 +330,72 @@ export async function processNegotiation(
   if (!buyerTeam || !sellerTeam) {
     return { ok: false, reason: "TEAM_NOT_FOUND", message: "Teams not found" };
   }
+
+  const activeCooldown = await prisma.negotiationCooldown.findFirst({
+    where: {
+      buyerTeamId: negotiation.buyerTeamId,
+      sellerTeamId: negotiation.sellerTeamId,
+      playerId: negotiation.playerId,
+      expiresAt: { gt: input.simulatedNow },
+    },
+    orderBy: { expiresAt: "desc" },
+  });
+  if (isCooldownActive(activeCooldown, input.simulatedNow)) {
+    return {
+      ok: false,
+      reason: "COOLDOWN_ACTIVE",
+      message: `Negotiation blocked by active cooldown until ${activeCooldown?.expiresAt.toISOString()}`,
+      retryAt: activeCooldown?.expiresAt,
+    };
+  }
+
+  let resolvedOferta: Oferta | null = input.oferta ?? null;
+  if (resolvedOferta && resolvedOferta.jugadoresOfrecidos.length > 0) {
+    const jugadorIds = resolvedOferta.jugadoresOfrecidos.map((p) => p.id);
+    const players = await prisma.player.findMany({
+      where: { id: { in: jugadorIds } },
+      select: { id: true, marketValue: true },
+    });
+    const rosters = await prisma.roster.findMany({
+      where: { playerId: { in: jugadorIds }, isActive: true },
+      select: { playerId: true, teamId: true, isActive: true },
+    });
+    const ownerTeam = await prisma.team.findFirst({
+      where: { id: negotiation.buyerTeamId },
+      select: { id: true },
+    });
+    const rosterOwnerByPlayer = new Map(rosters.map((r) => [r.playerId, r.teamId]));
+    for (const p of players) {
+      const owner = rosterOwnerByPlayer.get(p.id);
+      if (owner !== ownerTeam?.id) {
+        return {
+          ok: false,
+          reason: "TEAM_NOT_FOUND",
+          message: `Player ${p.id} is not owned by buyer team`,
+        };
+      }
+    }
+    const ctx: OfferPlayerContext = {
+      marketValueOf: (p) => players.find((pp) => pp.id === p.id)?.marketValue ?? 0,
+      releaseClauseOf: (p) => {
+        const found = players.find((pp) => pp.id === p.id);
+        return found ? effectiveReleaseClause(found) : null;
+      },
+      isListedForSale: () => false,
+    };
+    resolvedOferta = { ...resolvedOferta, jugadoresOfrecidos: players.map((p) => ({ id: p.id })) };
+    const breakdown = valorTotalOferta(resolvedOferta, ctx);
+    negotiation.agreedPrice = breakdown.total;
+  } else if (resolvedOferta) {
+    const ctx: OfferPlayerContext = {
+      marketValueOf: () => 0,
+      releaseClauseOf: () => null,
+      isListedForSale: () => false,
+    };
+    const breakdown = valorTotalOferta(resolvedOferta, ctx);
+    negotiation.agreedPrice = breakdown.total;
+  }
+  void resolvedOferta;
 
   try {
     return await withSerializableTransaction(prisma, async (tx) => {
@@ -451,8 +612,46 @@ export async function processNegotiation(
             status: "AGREED_CLUB",
             decidedAt: input.simulatedNow,
             effectiveDate: input.simulatedNow,
+            ...(input.canal ? { canal: input.canal } : {}),
           },
         });
+
+        if (resolvedOferta && resolvedOferta.jugadoresOfrecidos.length > 0 && negotiation.type === "PERMANENT") {
+          for (const jp of resolvedOferta.jugadoresOfrecidos) {
+            const activeRoster = await tx.roster.findFirst({
+              where: { playerId: jp.id, isActive: true },
+              select: { id: true, teamId: true },
+            });
+            if (activeRoster) {
+              await tx.roster.update({
+                where: { id: activeRoster.id },
+                data: {
+                  teamId: negotiation.sellerTeamId,
+                  isActive: true,
+                  isLoaned: false,
+                },
+              });
+            }
+            const inverse = await tx.transfer.create({
+              data: {
+                seasonId: negotiation.seasonId,
+                playerId: jp.id,
+                sellerTeamId: negotiation.buyerTeamId,
+                buyerTeamId: negotiation.sellerTeamId,
+                buyerId: negotiation.sellerId,
+                sellerId: negotiation.buyerId,
+                fee: 0,
+                status: "COMPLETED",
+                completedAt: input.simulatedNow,
+              },
+            });
+            await tx.player.update({
+              where: { id: jp.id },
+              data: { isLoaned: false, loanedToTeamId: null },
+            });
+            void inverse;
+          }
+        }
 
         for (const loser of ranking.losers) {
           await tx.negotiation.update({
@@ -524,6 +723,7 @@ export async function processNegotiation(
           decidedAt: input.simulatedNow,
           effectiveDate: next.opensAt,
           windowOpensAt: next.opensAt,
+          ...(input.canal ? { canal: input.canal } : {}),
         },
       });
 

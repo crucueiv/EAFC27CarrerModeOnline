@@ -3,6 +3,7 @@ import { prisma as defaultPrisma } from "@/lib/prisma";
 import { withSerializableTransaction } from "@/lib/calendar/calendarDb";
 import { getSimulatedCurrentDate } from "@/lib/calendar/simulatedClock";
 import { processExpiredLoans, executeLoanBuyOption } from "@/lib/transfers/loanEngine";
+import { deliverPendingEmailsForRecipient } from "@/lib/transfers/negotiationEmail";
 
 export type ProcessPendingNegotiationsInput = {
   userId?: string;
@@ -129,11 +130,25 @@ export async function processPendingNegotiations(
     if (r.ok) buyOptionsTriggered += 1;
   }
 
+  let deliveredEmails = { delivered: 0, expired: 0 };
+  if (input.userId) {
+    try {
+      deliveredEmails = await deliverPendingEmailsForRecipient({
+        receiverUserId: input.userId,
+        recipientCurrentDate: simulatedNow,
+        prismaClient: prisma,
+      });
+    } catch (e) {
+      console.error("[processPendingNegotiations] deliver pending emails failed:", e);
+    }
+  }
+
   return {
     ok: true,
     processed,
     errors,
     expiredLoans: loans.expired,
     buyOptionsTriggered,
+    ...deliveredEmails,
   };
 }

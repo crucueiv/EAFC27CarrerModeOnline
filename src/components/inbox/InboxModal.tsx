@@ -12,6 +12,9 @@ type ContractMetadata = {
   weeklyWage?: number;
   contractYears?: number;
   actionUrl?: string;
+  emailId?: string;
+  templateId?: string;
+  canal?: string;
 };
 
 export default function InboxModal({ onClose }: { onClose: () => void }) {
@@ -128,6 +131,54 @@ export default function InboxModal({ onClose }: { onClose: () => void }) {
       negotiationId: meta.negotiationId ?? null,
     });
   };
+
+  const [humanRespondBusy, setHumanRespondBusy] = useState(false);
+  const [humanRespondError, setHumanRespondError] = useState<string | null>(null);
+  const [humanRespondNotice, setHumanRespondNotice] = useState<string | null>(null);
+
+  async function respondHumanEmail(response: "ACCEPT" | "DENY" | "COUNTER") {
+    if (!selectedEmail) return;
+    const meta = (selectedEmail.metadata ?? {}) as {
+      emailId?: string;
+      type?: string;
+    };
+    if (!meta.emailId) {
+      setHumanRespondError("Este correo no tiene una oferta asociada.");
+      return;
+    }
+    const isLoan = meta.type === "CLUB_NEGOTIATION_PENDING_WINDOW" || selectedEmail.from.includes("loans");
+    const endpoint = isLoan
+      ? "/api/loans/email/respond"
+      : "/api/transfers/email/respond";
+    setHumanRespondBusy(true);
+    setHumanRespondError(null);
+    setHumanRespondNotice(null);
+    try {
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ emailId: meta.emailId, response }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setHumanRespondError(data.reason ?? data.error ?? "No se pudo enviar la respuesta.");
+        return;
+      }
+      if (response === "ACCEPT") {
+        setHumanRespondNotice("Oferta aceptada. El acuerdo se ha cerrado.");
+      } else if (response === "DENY") {
+        setHumanRespondNotice("Oferta denegada. La negociación ha finalizado.");
+      } else {
+        setHumanRespondNotice("Contraoferta enviada. Espera la respuesta del otro club.");
+      }
+      await loadEmails();
+    } catch (e) {
+      console.error("[inbox] respondHumanEmail failed:", e);
+      setHumanRespondError("Error de red al enviar la respuesta.");
+    } finally {
+      setHumanRespondBusy(false);
+    }
+  }
 
   const selectedMeta = (selectedEmail?.metadata as ContractMetadata | null) ?? null;
   const canStartContract =
@@ -250,6 +301,46 @@ export default function InboxModal({ onClose }: { onClose: () => void }) {
                     >
                       📝 Iniciar negociaciones de contrato
                     </button>
+                  </div>
+                )}
+
+                {selectedMeta?.emailId && (
+                  <div className="border-t border-slate-100 pt-4 space-y-3">
+                    <p className="text-xs text-slate-500">
+                      Esta oferta proviene de otro club humano. Responde con una de las opciones:
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => respondHumanEmail("DENY")}
+                        disabled={humanRespondBusy}
+                        className="rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-bold text-white shadow hover:bg-rose-700 disabled:opacity-50"
+                      >
+                        Denegar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => respondHumanEmail("COUNTER")}
+                        disabled={humanRespondBusy}
+                        className="rounded-xl bg-amber-600 px-4 py-2.5 text-sm font-bold text-white shadow hover:bg-amber-700 disabled:opacity-50"
+                      >
+                        Contraofertar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => respondHumanEmail("ACCEPT")}
+                        disabled={humanRespondBusy}
+                        className="rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white shadow hover:bg-emerald-700 disabled:opacity-50"
+                      >
+                        Aceptar
+                      </button>
+                    </div>
+                    {humanRespondError ? (
+                      <p className="text-xs text-rose-700">{humanRespondError}</p>
+                    ) : null}
+                    {humanRespondNotice ? (
+                      <p className="text-xs text-emerald-700">{humanRespondNotice}</p>
+                    ) : null}
                   </div>
                 )}
               </div>

@@ -10,7 +10,8 @@ export type LoanQuoteCategory =
   | "highTensionWarning"
   | "lowballHangup"
   | "accepted"
-  | "maxTensionHangup";
+  | "maxTensionHangup"
+  | "notInterested";
 
 export const LOAN_QUOTE_BANKS: Record<LoanQuoteCategory, string[]> = {
   greeting: [
@@ -26,6 +27,7 @@ export const LOAN_QUOTE_BANKS: Record<LoanQuoteCategory, string[]> = {
     "Rechazado. Como le dije, {durationLabel} no nos sirve: ni nos da tiempo a desarrollarlo ni compensa el vacío que deja {player} en {seller}.",
     "Lo siento, pero {durationLabel} no me sirve ni a mí ni a {player}. Necesito algo que nos permita reevaluar al futbolista antes de que vuelva a {seller}.",
     "Esa ventana de {durationLabel} se me queda corta para un proyecto serio. Si quieren a {player} tendrán que pensar en otra cesión más larga.",
+    "Ni de broma. {durationLabel} no encaja con la planificación de la plantilla. Si quieren a {player}, hablemos de una cesión que nos deje margen para reinsertarle en {seller}.",
   ],
   rejectionWage: [
     "¿{wageShareBuyerPct}% del sueldo? Eso es una miseria. {player} cobra bien y se merece que ambas partes aporten de verdad.",
@@ -33,6 +35,7 @@ export const LOAN_QUOTE_BANKS: Record<LoanQuoteCategory, string[]> = {
     "Rechazado de plano. Si solo pagan {wageShareBuyerPct}% del salario, prefiero quedarme con {player} y darle minutos en la cantera de {seller}.",
     "Vamos a ver, yo no soy adivino: {wageShareBuyerPct}% no me cuadra. Necesito una oferta seria si quieren contar con {player}.",
     "Perdone, {manager} habla. Con {wageShareBuyerPct}% del sueldo no llegamos ni a cubrir la gasolina. Suban la apuesta o cerramos la conversación.",
+    "Imposible. {wageShareBuyerPct}% del salario no compensa ni el desgaste de planificar la baja temporal de {player}. Suban la cifra o lo damos por cerrado.",
   ],
   rejectionBuyOption: [
     "Cesión con opción a compra por {buyOptionPrice}€? No. {player} vale más en el mercado; si la ejecutan, perdemos dinero en {seller}.",
@@ -40,6 +43,7 @@ export const LOAN_QUOTE_BANKS: Record<LoanQuoteCategory, string[]> = {
     "No, gracias. Una opción a {buyOptionPrice}€ es regalarlo. Si no la quitan, no hay cesión. Así de claro, {manager} al habla.",
     "Esa opción de compra está regalada. Por {buyOptionPrice}€ me quedo con {player} y me ahorro esta llamada.",
     "No insistan. {player} no es un paquete promocional: con {buyOptionPrice}€ de opción de compra no llegamos ni a la indemnización de {seller}.",
+    "Esa cláusula es humo. Por {buyOptionPrice}€ pierdo dinero contante y sonante, así que o la subimos o {player} no sale cedido. Siguiente.",
   ],
   counterOfferWage: [
     "Su propuesta de {wageShareBuyerPct}% no compensa. Bajen a {counterWageShareBuyerPct}% para nosotros, o cerramos la conversación.",
@@ -83,6 +87,13 @@ export const LOAN_QUOTE_BANKS: Record<LoanQuoteCategory, string[]> = {
     "Lamento decirles esto, pero se acabó. {player} no se mueve de {seller} en estas condiciones. *Clic*",
     "Hemos llegado al límite. {player} seguirá en {seller} y nosotros a lo nuestro. Suerte la próxima, {manager} les saluda.",
   ],
+  notInterested: [
+    "Les voy a ser claro: {player} es intocable para nosotros esta temporada, así que ni se moleste en ofertar.",
+    "Por aquí no va a salir. {player} es pieza clave en el esquema de {seller} y no entra en nuestros planes cederle.",
+    "No pierdan el tiempo. {player} está por encima de la media del equipo y no tenemos intención de soltarle. Buen intento, {manager} hablando.",
+    "Les agradezco el interés, pero la respuesta es no. {player} se queda en {seller}, no hay cesión que valga.",
+    "Miren, no vamos a entrar en números. {player} no está en venta ni en cesión, es jugador intransferible para este proyecto. Gracias por llamar.",
+  ],
 };
 
 export const DURATION_LABELS: Record<LoanDuration, string> = {
@@ -121,6 +132,8 @@ export function getRandomLoanQuote(
   }
   if (replacements.manager) {
     result = result.replaceAll("{manager}", replacements.manager);
+  } else {
+    result = result.replaceAll("{manager}", "el míster");
   }
   if (replacements.durationLabel) {
     result = result.replaceAll("{durationLabel}", replacements.durationLabel);
@@ -270,4 +283,24 @@ export function formatEuro(value: number): string {
     currency: "EUR",
     maximumFractionDigits: 0,
   }).format(Math.max(0, value));
+}
+
+export function resolveSellerManagerName(
+  sellerTeam: {
+    name?: string | null;
+    manager?: { name?: string | null; image?: string | null } | null;
+    managerProfile?: { name?: string | null; avatarUrl?: string | null } | null;
+  } | null | undefined,
+): string | null {
+  if (!sellerTeam) return null;
+  if (sellerTeam.manager?.name && sellerTeam.manager.name.trim().length > 0) {
+    return sellerTeam.manager.name.trim();
+  }
+  if (sellerTeam.managerProfile?.name && sellerTeam.managerProfile.name.trim().length > 0) {
+    return sellerTeam.managerProfile.name.trim();
+  }
+  if (sellerTeam.name) {
+    return `DT de ${sellerTeam.name}`;
+  }
+  return null;
 }

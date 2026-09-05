@@ -1,6 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
 import type { PrismaClient } from "@prisma/client";
-import { resolveUserClubTeamId, isPlayerOnUserTeam, assertNotOwnPlayer } from "@/lib/transfers/ownership";
+import {
+  resolveUserClubTeamId,
+  isPlayerOnUserTeam,
+  assertNotOwnPlayer,
+  isHumanManagedTeam,
+} from "@/lib/transfers/ownership";
 
 function makeMockPrisma(impl: {
   managedTeam?: { id: string } | null;
@@ -105,5 +110,23 @@ describe("assertNotOwnPlayer", () => {
       expect(r.reason).toBe("PLAYER_ALREADY_OWNED");
       expect(r.ownership).toBe("ROSTER");
     }
+  });
+});
+
+describe("isHumanManagedTeam", () => {
+  it("true si managerId es string no vacío", () => {
+    expect(isHumanManagedTeam({ managerId: "user-abc" })).toBe(true);
+  });
+  it("false si managerId es null", () => {
+    expect(isHumanManagedTeam({ managerId: null })).toBe(false);
+  });
+  it("false si managerId es string vacío", () => {
+    expect(isHumanManagedTeam({ managerId: "" })).toBe(false);
+  });
+  it("false si team es null", () => {
+    expect(isHumanManagedTeam(null)).toBe(false);
+  });
+  it("false si team es undefined", () => {
+    expect(isHumanManagedTeam(undefined)).toBe(false);
   });
 });

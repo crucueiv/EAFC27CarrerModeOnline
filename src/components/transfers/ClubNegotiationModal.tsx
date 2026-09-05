@@ -8,7 +8,8 @@ import {
   generateFakePhoneNumber,
   calculateNegotiationParams,
 } from '@/lib/transfers/negotiationEngine';
-import { getManagerAction } from '@/app/api/managers/managers'; // Server Action: consulta/crea el mánager real en BD o API-Sports
+import { getManagerAction } from '@/app/api/managers/managers';
+import { RivalManagerCard } from './RivalManagerCard';
 
 const FALLBACK_AVATAR = '/default-avatar.svg';
 
@@ -19,12 +20,18 @@ export interface ClubNegotiationModalProps {
     teamName?: string;
     managerName?: string;
     managerAvatarUrl?: string;
+    teamCrestUrl?: string | null;
+    teamPrimaryColor?: string | null;
+    teamShortName?: string | null;
   };
+  negotiationId?: string;
+  initialTension?: number;
   maxOfferLimit?: number;
   disabled?: boolean;
   disabledReason?: string;
   onClose: () => void;
   onAgreementReached: (agreedPrice: number) => void;
+  onHangup?: (outcome: 'HANGUP_LOWBALL' | 'HANGUP_TENSION', tensionAtHangup: number) => Promise<void> | void;
 }
 
 type CallStatus = 'active' | 'hangup_lowball' | 'hangup_tension' | 'accepted';
@@ -32,15 +39,18 @@ type CallStatus = 'active' | 'hangup_lowball' | 'hangup_tension' | 'accepted';
 export const ClubNegotiationModal: React.FC<ClubNegotiationModalProps> = ({
   isOpen,
   player,
+  negotiationId,
+  initialTension = 0,
   maxOfferLimit,
   disabled = false,
   disabledReason,
   onClose,
   onAgreementReached,
+  onHangup,
 }) => {
   const [phoneNumber, setPhoneNumber] = useState('');
   const [secondsElapsed, setSecondsElapsed] = useState(0);
-  const [tension, setTension] = useState(0);
+  const [tension, setTension] = useState(initialTension);
   const [currentCounterPrice, setCurrentCounterPrice] = useState(0);
   const [lowballThreshold, setLowballThreshold] = useState(0);
   const [dialogue, setDialogue] = useState('');
@@ -48,24 +58,18 @@ export const ClubNegotiationModal: React.FC<ClubNegotiationModalProps> = ({
   const [callStatus, setCallStatus] = useState<CallStatus>('active');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Estados para almacenar la información real del mánager
   const [managerName, setManagerName] = useState<string>(player.managerName || 'Cargando Mánager...');
   const [managerAvatar, setManagerAvatar] = useState<string | null>(player.managerAvatarUrl || null);
   const [isLoadingManager, setIsLoadingManager] = useState(false);
 
   useEffect(() => {
     if (!isOpen) return;
-
-    // Evita que una respuesta "vieja" (de un jugador/equipo anterior) sobreescriba
-    // el estado si el modal se cierra y se reabre rápido con otro `player`.
     let cancelled = false;
-
     const initialPhone = generateFakePhoneNumber();
     const params = calculateNegotiationParams(player);
-
     setPhoneNumber(initialPhone);
     setSecondsElapsed(0);
-    setTension(0);
+    setTension(initialTension);
     setLowballThreshold(params.lowballThreshold);
     setCurrentCounterPrice(params.targetPrice);
     setCallStatus('active');
@@ -74,14 +78,10 @@ export const ClubNegotiationModal: React.FC<ClubNegotiationModalProps> = ({
     setDialogue(getRandomQuote('greeting', { player: player.name }));
 
     const isFreeAgentTransfer = player.currentTeam?.eaId === 'FREE_AGENTS' || !player.teamId;
-
-    // Los agentes libres no negocian con un club ni requieren resolver un director técnico
-    // del equipo origen. Se omite la búsqueda para evitar llamadas innecesarias en rutas no válidas.
     if (!isFreeAgentTransfer && player.teamId) {
       setManagerName(player.managerName || 'Cargando Mánager...');
       setManagerAvatar(player.managerAvatarUrl || null);
       setIsLoadingManager(true);
-
       getManagerAction(player.teamId)
         .then((mgr) => {
           if (cancelled) return;
@@ -91,9 +91,6 @@ export const ClubNegotiationModal: React.FC<ClubNegotiationModalProps> = ({
         .catch((err) => {
           if (cancelled) return;
           console.error('Error al obtener mánager:', err);
-          // Fallback robusto: nunca mostrar "Director Técnico" genérico ni
-          // una URL rota. Usamos el nombre del club vendedor como referencia
-          // y el avatar local placeholder (con onError que también cae aquí).
           setManagerName(player.managerName || `Cuerpo técnico de ${player.teamName ?? 'club rival'}`);
           setManagerAvatar(player.managerAvatarUrl || FALLBACK_AVATAR);
         })
@@ -105,103 +102,108 @@ export const ClubNegotiationModal: React.FC<ClubNegotiationModalProps> = ({
       setManagerAvatar(player.managerAvatarUrl || null);
       setIsLoadingManager(false);
     }
-
     return () => {
       cancelled = true;
     };
-  }, [isOpen, player]);
+  }, [isOpen, player, initialTension]);
 
-  // Cronómetro de la llamada activa
   useEffect(() => {
     if (!isOpen || callStatus !== 'active') return;
-
-    const timer = setInterval(() => {
-      setSecondsElapsed((prev) => prev + 1);
-    }, 1000);
-
+    const timer = setInterval(() => setSecondsElapsed((prev) => prev + 1), 1000);
     return () => clearInterval(timer);
   }, [isOpen, callStatus]);
+
+  async function persistTensionDelta(delta: number) {
+    if (!negotiationId) return;
+    try {
+      await fetch('/api/transfers/offer', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ negotiationId, outcome: 'TENSION_UPDATE', tensionDelta: delta }),
+      });
+    } catch (e) {
+      console.error('[ClubNegotiationModal] tension persist failed:', e);
+    }
+  }
+
+  async function persistHangup(outcome: 'HANGUP_LOWBALL' | 'HANGUP_TENSION') {
+    if (!negotiationId) return;
+    try {
+      await fetch('/api/transfers/offer', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ negotiationId, outcome }),
+      });
+    } catch (e) {
+      console.error('[ClubNegotiationModal] hangup persist failed:', e);
+    }
+  }
 
   if (!isOpen) return null;
 
   const formatTimer = (totalSeconds: number) => {
-    const mins = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
-    const secs = (totalSeconds % 60).toString().padStart(2, '0');
-    return `${mins}:${secs}`;
+    const m = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
+    const s = (totalSeconds % 60).toString().padStart(2, '0');
+    return `${m}:${s}`;
   };
 
   const handleSendOffer = (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
-
     const offerNum = parseFloat(userOffer);
-
     if (isNaN(offerNum) || offerNum <= 0) return;
-
     if (maxOfferLimit && offerNum > maxOfferLimit) {
-      setErrorMessage(
-        `Tu presupuesto máximo disponible es de ${maxOfferLimit.toLocaleString('es-ES')} €.`
-      );
+      setErrorMessage(`Tu presupuesto máximo disponible es de ${maxOfferLimit.toLocaleString('es-ES')} €.`);
       return;
     }
-
     if (offerNum < lowballThreshold) {
       setCallStatus('hangup_lowball');
       setTension(100);
       setDialogue(getRandomQuote('lowballAnger', { player: player.name }));
+      void persistHangup('HANGUP_LOWBALL');
+      void onHangup?.('HANGUP_LOWBALL', 100);
       return;
     }
-
     if (offerNum >= currentCounterPrice) {
       setCallStatus('accepted');
       setDialogue(
         getRandomQuote('accepted', {
           player: player.name,
           counter: `${offerNum.toLocaleString('es-ES')} €`,
-        })
+        }),
       );
       onAgreementReached(offerNum);
       return;
     }
-
     const gapRatio = (currentCounterPrice - offerNum) / currentCounterPrice;
     let tensionIncrement = 15;
     if (gapRatio > 0.25) tensionIncrement = 35;
     else if (gapRatio > 0.15) tensionIncrement = 25;
-
     const newTension = Math.min(100, tension + tensionIncrement);
     setTension(newTension);
-
+    void persistTensionDelta(tensionIncrement);
     if (newTension >= 100) {
       setCallStatus('hangup_tension');
       setDialogue(getRandomQuote('maxTensionHangup', { player: player.name }));
+      void persistHangup('HANGUP_TENSION');
+      void onHangup?.('HANGUP_TENSION', 100);
       return;
     }
-
     const newCounter = Math.max(
       lowballThreshold,
-      currentCounterPrice - Math.round((currentCounterPrice - offerNum) * 0.35)
+      currentCounterPrice - Math.round((currentCounterPrice - offerNum) * 0.35),
     );
     setCurrentCounterPrice(newCounter);
-
     const formattedCounter = `${newCounter.toLocaleString('es-ES')} €`;
-
     if (newTension >= 75) {
       setDialogue(
-        getRandomQuote('highTensionWarning', {
-          player: player.name,
-          counter: formattedCounter,
-        })
+        getRandomQuote('highTensionWarning', { player: player.name, counter: formattedCounter }),
       );
     } else {
       setDialogue(
-        getRandomQuote('counterOffer', {
-          player: player.name,
-          counter: formattedCounter,
-        })
+        getRandomQuote('counterOffer', { player: player.name, counter: formattedCounter }),
       );
     }
-
     setUserOffer('');
   };
 
@@ -211,47 +213,32 @@ export const ClubNegotiationModal: React.FC<ClubNegotiationModalProps> = ({
     return 'bg-rose-600';
   };
 
-  const teamName = player.teamName || 'Club RivaL';
+  const teamName = player.teamName || 'Club Rival';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
       <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl overflow-hidden flex flex-col">
-        
-        {/* Cabecera visual de llamada */}
-        <div className="bg-slate-950 p-6 flex flex-col items-center border-b border-slate-800/80 relative">
-          <div className="relative mb-3">
-            <img
-              src={managerAvatar || FALLBACK_AVATAR}
-              alt={managerName}
-              className={`w-24 h-24 rounded-full border-4 border-slate-700 object-cover shadow-lg transition-opacity duration-300 ${
-                isLoadingManager ? 'opacity-50 animate-pulse' : 'opacity-100'
-              }`}
-              onError={(e) => {
-                const el = e.currentTarget;
-                if (el.src !== window.location.origin + FALLBACK_AVATAR && !el.src.endsWith(FALLBACK_AVATAR)) {
-                  el.src = FALLBACK_AVATAR;
-                }
-              }}
-            />
-            {callStatus === 'active' && (
-              <span className="absolute bottom-1 right-1 flex h-4 w-4">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-4 w-4 bg-emerald-500"></span>
-              </span>
-            )}
-          </div>
 
-          <h3 className="text-xl font-bold text-white tracking-wide">{managerName}</h3>
-          <p className="text-sm font-medium text-slate-400">{teamName}</p>
-          <p className="text-xs text-slate-500 font-mono mt-1">{phoneNumber}</p>
-
+        <div className="bg-slate-950 p-4 border-b border-slate-800/80">
+          <RivalManagerCard
+            managerName={managerName}
+            managerAvatarUrl={managerAvatar}
+            teamName={teamName}
+            teamCrestUrl={player.teamCrestUrl ?? null}
+            teamPrimaryColor={player.teamPrimaryColor ?? null}
+            teamShortName={player.teamShortName ?? null}
+            phoneNumber={phoneNumber}
+            isLive={callStatus === 'active'}
+            isFinished={callStatus !== 'active'}
+            secondsElapsed={callStatus === 'active' ? secondsElapsed : undefined}
+            subtitle={isLoadingManager ? 'Cargando rival...' : 'Negociación de club'}
+          />
           <div className="mt-3 inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900 border border-slate-800 text-xs font-mono font-semibold text-emerald-400">
-            <PhoneCall size={14} className="animate-pulse" />
+            <PhoneCall size={14} className={callStatus === 'active' ? 'animate-pulse' : ''} />
             <span>{callStatus === 'active' ? formatTimer(secondsElapsed) : 'Llamada Finalizada'}</span>
           </div>
         </div>
 
-        {/* Barra de Tensión */}
         <div className="px-6 py-3 bg-slate-900/90 border-b border-slate-800">
           <div className="flex justify-between items-center text-xs font-semibold mb-1">
             <span className="text-slate-400 flex items-center gap-1">
@@ -267,14 +254,12 @@ export const ClubNegotiationModal: React.FC<ClubNegotiationModalProps> = ({
           </div>
         </div>
 
-        {/* Réplicas y Frases del Mánager */}
         <div className="p-6 flex-1 min-h-[140px] flex items-center justify-center bg-slate-950/40">
           <div className="bg-slate-800/80 border border-slate-700/60 rounded-2xl p-4 text-slate-200 text-sm leading-relaxed text-center shadow-inner w-full">
             "{dialogue}"
           </div>
         </div>
 
-        {/* Formulario de Oferta */}
         <div className="p-6 bg-slate-950 border-t border-slate-800">
           {callStatus === 'active' ? (
             <form onSubmit={handleSendOffer} className="space-y-4">
@@ -296,19 +281,14 @@ export const ClubNegotiationModal: React.FC<ClubNegotiationModalProps> = ({
                   />
                   <span className="absolute right-4 top-3.5 text-xs font-bold text-slate-400">EUR</span>
                 </div>
-                {maxOfferLimit && (
+                {maxOfferLimit ? (
                   <p className="text-xs text-slate-400 mt-1.5 flex justify-between px-1">
                     <span>Límite disponible:</span>
-                    <span className="font-semibold text-slate-300">
-                      {maxOfferLimit.toLocaleString('es-ES')} €
-                    </span>
+                    <span className="font-semibold text-slate-300">{maxOfferLimit.toLocaleString('es-ES')} €</span>
                   </p>
-                )}
-                {errorMessage && (
-                  <p className="text-xs text-rose-400 mt-1 px-1 font-medium">{errorMessage}</p>
-                )}
+                ) : null}
+                {errorMessage ? <p className="text-xs text-rose-400 mt-1 px-1 font-medium">{errorMessage}</p> : null}
               </div>
-
               <div className="flex gap-3">
                 <button
                   type="submit"
@@ -340,7 +320,7 @@ export const ClubNegotiationModal: React.FC<ClubNegotiationModalProps> = ({
                   ? 'Acuerdos de traspaso alcanzados. Esperando a negociaciones de contrato: mira tu correo.'
                   : 'La llamada ha finalizado sin acuerdo.'}
               </div>
-              {callStatus === 'accepted' && (
+              {callStatus === 'accepted' ? (
                 <button
                   type="button"
                   onClick={() => {
@@ -351,7 +331,7 @@ export const ClubNegotiationModal: React.FC<ClubNegotiationModalProps> = ({
                 >
                   Ir al correo
                 </button>
-              )}
+              ) : null}
               <button
                 onClick={onClose}
                 className="w-full bg-slate-800 hover:bg-slate-700 text-white font-semibold py-3 rounded-xl transition text-sm"
@@ -361,7 +341,6 @@ export const ClubNegotiationModal: React.FC<ClubNegotiationModalProps> = ({
             </div>
           )}
         </div>
-
       </div>
     </div>
   );

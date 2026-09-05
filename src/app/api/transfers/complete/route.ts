@@ -5,6 +5,8 @@ import { generateClubNegotiationEmail } from "@/lib/emails/templates";
 import { getOrCreateActiveSeason } from "@/lib/seasons";
 import { getSimulatedCurrentDate } from "@/lib/calendar/simulatedClock";
 import { processNegotiation } from "@/lib/transfers/processNegotiation";
+import { sendNegotiationEmail } from "@/lib/transfers/negotiationEmail";
+import { isHumanManagedTeam } from "@/lib/transfers/ownership";
 import {
   pureBuildSummerWindow,
   pureBuildWinterWindow,
@@ -71,7 +73,7 @@ export async function POST(request: Request) {
 
     const sellerTeam = await prisma.team.findUnique({
       where: { id: sellerTeamId },
-      select: { id: true, name: true },
+      select: { id: true, name: true, managerId: true, imageUrl: true, primaryColor: true, shortName: true },
     });
     if (!sellerTeam) {
       return NextResponse.json({ error: "Equipo vendedor no encontrado" }, { status: 404 });
@@ -116,6 +118,49 @@ export async function POST(request: Request) {
         ...pureBuildWinterWindow(simulatedNow.getUTCFullYear() + 1),
         seasonId: season.id,
       };
+    }
+
+    if (isHumanManagedTeam(sellerTeam)) {
+      const negotiation = await prisma.negotiation.create({
+        data: {
+          playerId,
+          buyerTeamId: userTeam.id,
+          sellerTeamId: sellerTeam.id,
+          buyerId: userId,
+          sellerId: sellerTeam.managerId!,
+          seasonId: season.id,
+          type: "PERMANENT",
+          status: "PENDING_AGREEMENT",
+          canal: "HUMAN_EMAIL",
+          agreedPrice,
+          offeredWage: 0,
+          sellerSalaryPercent: 0,
+          buyerSalaryPercent: 100,
+          effectiveDate: fallbackWindow.opensAt,
+          windowOpensAt: fallbackWindow.opensAt,
+          decidedAt: simulatedNow,
+        },
+      });
+      try {
+        await sendNegotiationEmail({
+          negotiationId: negotiation.id,
+          senderUserId: userId,
+          receiverUserId: sellerTeam.managerId!,
+          oferta: { dinero: agreedPrice, jugadoresOfrecidos: [] },
+          simulatedSentAt: simulatedNow,
+          prismaClient: prisma,
+          kind: "TRANSFER",
+        });
+      } catch (e) {
+        console.error("[transfers/complete] human email send failed:", e);
+      }
+      return NextResponse.json({
+        success: true,
+        canal: "HUMAN_EMAIL",
+        negotiationId: negotiation.id,
+        effectiveDate: fallbackWindow.opensAt.toISOString(),
+        sellerTeamName: sellerTeam.name,
+      });
     }
 
     const negotiation = await prisma.negotiation.create({
