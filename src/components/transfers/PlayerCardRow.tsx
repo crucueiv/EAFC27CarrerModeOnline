@@ -38,7 +38,12 @@ export default function PlayerCardRow({ player, ownClubTeamId }: { player: Trans
   const [loanInit, setLoanInit] = useState<{
     loanId: string;
     greeting: string;
-    schedule: { startsAt: string; endsAt: string; weeks: number };
+    schedule: {
+      startsAt: string;
+      endsAt: string;
+      weeks: number;
+      seasonEndAt?: string | null;
+    };
     totalWageCost: number;
     weeklyWage: number;
     buyerWeeklyWageCost: number;
@@ -138,7 +143,12 @@ export default function PlayerCardRow({ player, ownClubTeamId }: { player: Trans
         setLoanInit({
           loanId: data.loanId,
           greeting: data.greeting,
-          schedule: data.schedule ?? { startsAt: new Date().toISOString(), endsAt: new Date().toISOString(), weeks: 0 },
+          schedule: data.schedule ?? {
+            startsAt: new Date().toISOString(),
+            endsAt: new Date().toISOString(),
+            weeks: 0,
+            seasonEndAt: null,
+          },
           totalWageCost: data.totalWageCost ?? 0,
           weeklyWage: data.weeklyWage ?? 0,
           buyerWeeklyWageCost: data.buyerWeeklyWageCost ?? 0,

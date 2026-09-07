@@ -3,12 +3,11 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { canPlayerBeLoanedOut } from "@/lib/transfers/loanEligibility";
 import {
-  ACTIVE_LOAN_STATUSES,
+  calculateLoanFinancialBreakdown,
+  calculateLoanWeeks,
   computeLoanEndDate,
   findActiveLoanForBuyer,
   type LoanType,
-  calculateLoanWageCost,
-  calculateLoanWageShare,
 } from "@/lib/transfers/loanEngine";
 import { getRandomLoanQuote, formatEuro, resolveSellerManagerName } from "@/lib/transfers/loanNegotiationEngine";
 import type { LoanDuration } from "@/lib/transfers/loanNegotiationEngine";
@@ -76,9 +75,16 @@ export async function POST(request: Request) {
         include: {
           manager: { select: { name: true, image: true } },
           managerProfile: { select: { name: true, avatarUrl: true } },
+          league: { select: { id: true } },
         },
       },
-      player: true,
+      player: {
+        include: {
+          matchStats: {
+            select: { rating: true },
+          },
+        },
+      },
     },
   });
   if (!roster) return NextResponse.json({ error: "no-roster" }, { status: 400 });
@@ -178,7 +184,12 @@ export async function POST(request: Request) {
       ineligible: true,
       ineligibilityReason: eligibility.reason ?? null,
       greeting: message,
-      schedule: { startsAt: windowOpensAt, endsAt: windowOpensAt, weeks: 0 },
+      schedule: {
+        startsAt: windowOpensAt,
+        endsAt: windowOpensAt,
+        weeks: 0,
+        seasonEndAt: seasonEndDate?.endDate ?? null,
+      },
       totalWageCost: 0,
       weeklyWage: 0,
       buyerWeeklyWageCost: 0,
@@ -236,13 +247,28 @@ export async function POST(request: Request) {
     dribbling: roster.player.dribbling,
     defending: roster.player.defending,
     physical: roster.player.physical,
-    role: "Rotation",
+    role:
+      roster.role === "CLAVE"
+        ? "Crucial"
+        : roster.role === "IMPORTANTE"
+          ? "Important"
+          : "Rotation",
+    leagueFactor: sellerTeam.league ? 1.2 : 1,
+    matchRatings: roster.player.matchStats.map((stat) => stat.rating),
   });
-  const weeklyWage = financial.weeklyWage;
-  const buyerWeeklyWageCost = calculateLoanWageShare(weeklyWage, body.wageShareBuyerPct);
-  const totalWageCost = calculateLoanWageCost(weeklyWage, body.wageShareBuyerPct, weeks);
+  const weeklyWage = Math.max(0, Math.round(financial.weeklyWage));
+  // Calculamos el desglose financiero completo de la cesión propuesta.
+  const breakdown = calculateLoanFinancialBreakdown({
+    weeklyWage,
+    wageShareBuyerPct: body.wageShareBuyerPct,
+    weeks,
+    buyOptionPrice: body.hasBuyOption ? body.buyOptionPrice ?? 0 : 0,
+  });
+  const buyerWeeklyWageCost = breakdown.buyerWeeklyWage;
+  const totalWageCost = breakdown.totalWageCost;
+  const totalLoanCost = breakdown.totalLoanCost;
 
-  if (userTeam.budget < totalWageCost) {
+  if (userTeam.budget < totalLoanCost) {
     return NextResponse.json({ error: "insufficient-budget" }, { status: 400 });
   }
 
@@ -326,16 +352,19 @@ export async function POST(request: Request) {
       negotiationId: negotiation.id,
       canal: "HUMAN_EMAIL",
       emailId,
-      schedule: { startsAt, endsAt, weeks },
+      schedule: { startsAt, endsAt, weeks, seasonEndAt: seasonEndDate?.endDate ?? null },
       totalWageCost,
       weeklyWage,
       buyerWeeklyWageCost,
+      buyOptionPrice: body.hasBuyOption ? body.buyOptionPrice ?? 0 : 0,
+      totalLoanCost,
       wageShareBuyerPct: body.wageShareBuyerPct,
       formatted: {
         wageShareBuyerPct: body.wageShareBuyerPct,
         weeklyWage: formatEuro(weeklyWage),
         buyerWeeklyWage: formatEuro(buyerWeeklyWageCost),
         totalWageCost: formatEuro(totalWageCost),
+        totalLoanCost: formatEuro(totalLoanCost),
         buyOptionPrice: body.buyOptionPrice ? formatEuro(body.buyOptionPrice) : null,
       },
     });
@@ -351,16 +380,19 @@ export async function POST(request: Request) {
     loanId: loan.id,
     negotiationId: negotiation.id,
     greeting,
-    schedule: { startsAt, endsAt, weeks },
+    schedule: { startsAt, endsAt, weeks, seasonEndAt: seasonEndDate?.endDate ?? null },
     totalWageCost,
     weeklyWage,
     buyerWeeklyWageCost,
+    buyOptionPrice: body.hasBuyOption ? body.buyOptionPrice ?? 0 : 0,
+    totalLoanCost,
     wageShareBuyerPct: body.wageShareBuyerPct,
     formatted: {
       wageShareBuyerPct: body.wageShareBuyerPct,
       weeklyWage: formatEuro(weeklyWage),
       buyerWeeklyWage: formatEuro(buyerWeeklyWageCost),
       totalWageCost: formatEuro(totalWageCost),
+      totalLoanCost: formatEuro(totalLoanCost),
       buyOptionPrice: body.buyOptionPrice ? formatEuro(body.buyOptionPrice) : null,
     },
   });

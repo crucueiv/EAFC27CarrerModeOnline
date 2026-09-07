@@ -36,6 +36,15 @@ type CalendarMonthResponse = {
   lockReason: string | null;
   transferWindows: WindowDto[];
   matches: MatchDto[];
+  userManagers: Array<{
+    userId: string;
+    name: string;
+    avatarUrl: string | null;
+    teamId: string;
+    teamName: string;
+    currentDate: string | null;
+    isCurrentUser: boolean;
+  }>;
 };
 
 export async function GET(req: Request) {
@@ -69,6 +78,7 @@ export async function GET(req: Request) {
     lockReason: null,
     transferWindows: [],
     matches: [],
+    userManagers: [],
   };
 
   if (!user?.clubTeam) {
@@ -106,7 +116,7 @@ export async function GET(req: Request) {
   const monthStart = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0));
   const monthEnd = new Date(Date.UTC(year, month, 1, 0, 0, 0));
 
-  const [calendar, windows, matches] = await Promise.all([
+  const [calendar, windows, matches, userManagedTeams] = await Promise.all([
     prisma.teamCalendarState.findUnique({
       where: { teamId_seasonId: { teamId: user.clubTeam!.id, seasonId: season.id } },
       select: { currentDate: true, maxAllowedDate: true, isLocked: true, lockReason: true },
@@ -124,6 +134,23 @@ export async function GET(req: Request) {
       },
       orderBy: { scheduledAt: "asc" },
       include: { homeTeam: { select: { id: true, name: true } }, awayTeam: { select: { id: true, name: true } } },
+    }),
+    prisma.team.findMany({
+      where: {
+        managerId: { not: null },
+        league: { careerGroupId: user.clubTeam.league?.careerGroupId ?? "__none__" },
+      },
+      select: {
+        id: true,
+        name: true,
+        manager: { select: { id: true, name: true, username: true, avatarUrl: true, image: true } },
+        calendarStates: {
+          where: { seasonId: season.id },
+          select: { currentDate: true },
+          take: 1,
+        },
+      },
+      orderBy: { name: "asc" },
     }),
   ]);
 
@@ -160,6 +187,17 @@ export async function GET(req: Request) {
       status: m.status,
       isHome: m.homeTeamId === user.clubTeam!.id,
     })),
+    userManagers: userManagedTeams
+      .filter((team) => team.manager)
+      .map((team) => ({
+        userId: team.manager!.id,
+        name: team.manager!.name ?? team.manager!.username ?? "Manager",
+        avatarUrl: team.manager!.avatarUrl ?? team.manager!.image ?? null,
+        teamId: team.id,
+        teamName: team.name,
+        currentDate: team.calendarStates[0]?.currentDate?.toISOString() ?? null,
+        isCurrentUser: team.manager!.id === session.user.id,
+      })),
   };
 
   return NextResponse.json(dto);

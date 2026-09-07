@@ -31,6 +31,15 @@ import {
   isCooldownActive,
   valorTotalOferta,
 } from "@/lib/transfers/negotiationRules";
+import {
+  commitBudget,
+  releaseBudget,
+  creditBudget,
+  consumeBudget,
+  getBudgetSnapshot,
+  settleCommittedTransfer,
+} from "@/lib/transfers/budgetCommitment";
+import { activateLoanInTransaction } from "@/lib/transfers/loanActivationService";
 
 export type ProcessNegotiationInput = {
   negotiationId: string;
@@ -277,22 +286,6 @@ function ensureLoanDuration(
   throw new Error(`ensureLoanDuration: not a loan type: ${type}`);
 }
 
-function buyerCommittedBudget(
-  tx: Prisma.TransactionClient,
-  buyerTeamId: string,
-): Promise<number> {
-  return tx.transfer
-    .aggregate({
-      where: {
-        buyerTeamId,
-        status: { in: ["PROPOSED", "ACCEPTED"] },
-        fee: { gt: 0 },
-      },
-      _sum: { fee: true },
-    })
-    .then((res) => Number(res._sum?.fee ?? 0));
-}
-
 export async function processNegotiation(
   input: ProcessNegotiationInput,
 ): Promise<ProcessNegotiationResult> {
@@ -416,6 +409,8 @@ export async function processNegotiation(
           agreedPrice: true,
           effectiveDate: true,
           createdAt: true,
+          buyerTeamId: true,
+          status: true,
         },
       });
 
@@ -491,8 +486,7 @@ export async function processNegotiation(
         };
       }
 
-      const committed = await buyerCommittedBudget(tx, buyerTeam.id);
-      const available = Math.max(0, buyerTeam.budget - committed);
+      const available = Math.max(0, buyerTeam.budget);
       if (negotiation.agreedPrice > available) {
         await tx.negotiation.update({
           where: { id: negotiation.id },
@@ -526,7 +520,7 @@ export async function processNegotiation(
       if (window.kind === "WITHIN") {
         const freshBuyer = await tx.team.findUnique({
           where: { id: buyerTeam.id },
-          select: { budget: true },
+          select: { budget: true, committedBudget: true },
         });
         if (!freshBuyer || freshBuyer.budget < negotiation.agreedPrice) {
           await tx.negotiation.update({
@@ -540,17 +534,12 @@ export async function processNegotiation(
           };
         }
 
-        await tx.team.update({
-          where: { id: buyerTeam.id },
-          data: { budget: { decrement: negotiation.agreedPrice } },
-        });
-        await tx.team.update({
-          where: { id: sellerTeam.id },
-          data: { budget: { increment: negotiation.agreedPrice } },
-        });
-
-        const buyerBudgetAfter = freshBuyer.budget - negotiation.agreedPrice;
-        const sellerBudgetAfter = sellerTeam.budget + negotiation.agreedPrice;
+        // Movemos el dinero del presupuesto líquido al comprometido del
+        // comprador. La transferencia / préstamo queda en estado
+        // WAITING_PLAYER_CONTRACT y, al firmarse definitivamente, el dinero
+        // comprometido se consume y se paga al vendedor.
+        const agreedAmount = Math.round(negotiation.agreedPrice);
+        const buyerSnap = await commitBudget(tx, buyerTeam.id, agreedAmount);
 
         let transferId: string | null = null;
         let loanId: string | null = null;
@@ -579,37 +568,63 @@ export async function processNegotiation(
             negotiation.type as TransferType,
             negotiation.season?.endDate ?? null,
           );
-          const created = await tx.loan.create({
-            data: {
-              seasonId: negotiation.seasonId,
-              playerId: negotiation.playerId,
-              sellerTeamId: negotiation.sellerTeamId,
-              buyerTeamId: negotiation.buyerTeamId,
-              buyerId: negotiation.buyerId,
-              sellerId: negotiation.sellerId,
-              duration: loanDuration,
-              wageShareBuyerPct: negotiation.buyerSalaryPercent,
-              hasBuyOption: negotiation.buyoutOptionPrice !== null,
-              buyOptionPrice:
+          const existingLoan = await tx.loan.findUnique({
+            where: { negotiationId: negotiation.id },
+            select: { id: true, metadata: true },
+          });
+          const loanData = {
+            seasonId: negotiation.seasonId,
+            playerId: negotiation.playerId,
+            sellerTeamId: negotiation.sellerTeamId,
+            buyerTeamId: negotiation.buyerTeamId,
+            buyerId: negotiation.buyerId,
+            sellerId: negotiation.sellerId,
+            duration: loanDuration,
+            wageShareBuyerPct: negotiation.buyerSalaryPercent,
+            hasBuyOption: negotiation.buyoutOptionPrice !== null,
+            buyOptionPrice:
+              negotiation.buyoutOptionPrice !== null
+                ? Math.round(negotiation.buyoutOptionPrice)
+                : null,
+            fee: Math.round(negotiation.agreedPrice),
+            status: "AGREED_CLUB" as const,
+            startsAt,
+            endsAt,
+            completedAt: null,
+            squadRoleSnapshot: negotiation.squadRole,
+            metadata: {
+              ...((existingLoan?.metadata as Record<string, unknown> | null) ?? {}),
+              totalWageCost: Math.round(negotiation.agreedPrice),
+              acceptedWageShareBuyerPct: negotiation.buyerSalaryPercent,
+              acceptedBuyOptionPrice:
                 negotiation.buyoutOptionPrice !== null
                   ? Math.round(negotiation.buyoutOptionPrice)
                   : null,
-              fee: Math.round(negotiation.agreedPrice),
-              status: "WAITING_PLAYER_CONTRACT",
-              startsAt,
-              endsAt,
-              completedAt: null,
-              negotiationId: negotiation.id,
-              squadRoleSnapshot: negotiation.squadRole,
+              acceptedDuration: loanDuration,
             },
+          };
+          const saved = existingLoan
+            ? await tx.loan.update({
+                where: { id: existingLoan.id },
+                data: loanData,
+              })
+            : await tx.loan.create({
+                data: { ...loanData, negotiationId: negotiation.id },
+              });
+          loanId = saved.id;
+          const activated = await activateLoanInTransaction(tx, {
+            loanId: saved.id,
+            simulatedNow: input.simulatedNow,
           });
-          loanId = created.id;
+          if (!activated.ok) {
+            throw new Error(`Loan activation failed: ${activated.reason}`);
+          }
         }
 
         await tx.negotiation.update({
           where: { id: negotiation.id },
           data: {
-            status: "AGREED_CLUB",
+            status: negotiation.type === "PERMANENT" ? "AGREED_CLUB" : "COMPLETED",
             decidedAt: input.simulatedNow,
             effectiveDate: input.simulatedNow,
             ...(input.canal ? { canal: input.canal } : {}),
@@ -654,6 +669,20 @@ export async function processNegotiation(
         }
 
         for (const loser of ranking.losers) {
+          const loserNegotiation = competitors.find((candidate) => candidate.id === loser.id);
+          if (
+            loserNegotiation &&
+            ["AGREED_PENDING_WINDOW", "AGREED_ACTIVE", "AGREED_CLUB"].includes(
+              loserNegotiation.status,
+            ) &&
+            loserNegotiation.agreedPrice > 0
+          ) {
+            await releaseBudget(
+              tx,
+              loserNegotiation.buyerTeamId,
+              Math.round(loserNegotiation.agreedPrice),
+            );
+          }
           await tx.negotiation.update({
             where: { id: loser.id },
             data: { status: "CANCELLED", decidedAt: input.simulatedNow },
@@ -662,7 +691,9 @@ export async function processNegotiation(
 
         return {
           ok: true as const,
-          status: "AGREED_CLUB" as const,
+          status: negotiation.type === "PERMANENT"
+            ? "AGREED_CLUB" as const
+            : "COMPLETED" as const,
           negotiationId: negotiation.id,
           effectiveDate: input.simulatedNow,
           transferId,
@@ -670,16 +701,16 @@ export async function processNegotiation(
           budgetAfter: {
             buyerId: buyerTeam.id,
             sellerId: sellerTeam.id,
-            buyerBudget: buyerBudgetAfter,
-            sellerBudget: sellerBudgetAfter,
+            buyerBudget: buyerSnap.budget,
+            sellerBudget: sellerTeam.budget,
           },
         };
       }
 
-      // PENDING_NEXT or OUT_OF_SEASON: cobro inmediato, roster diferido
+      // PENDING_NEXT or OUT_OF_SEASON: reserva inmediata, roster diferido
       const freshBuyer = await tx.team.findUnique({
         where: { id: buyerTeam.id },
-        select: { budget: true },
+        select: { budget: true, committedBudget: true },
       });
       if (!freshBuyer || freshBuyer.budget < negotiation.agreedPrice) {
         await tx.negotiation.update({
@@ -693,17 +724,14 @@ export async function processNegotiation(
         };
       }
 
-      await tx.team.update({
-        where: { id: buyerTeam.id },
-        data: { budget: { decrement: negotiation.agreedPrice } },
-      });
-      await tx.team.update({
-        where: { id: sellerTeam.id },
-        data: { budget: { increment: negotiation.agreedPrice } },
-      });
-
-      const buyerBudgetAfter = freshBuyer.budget - negotiation.agreedPrice;
-      const sellerBudgetAfter = sellerTeam.budget + negotiation.agreedPrice;
+      const agreedAmountPending = Math.round(negotiation.agreedPrice);
+      // Reservamos el dinero en `committedBudget` hasta la apertura de la
+      // ventana de traspasos. Si la operación se cancela antes, se devuelve.
+      const buyerSnapPending = await commitBudget(tx, buyerTeam.id, agreedAmountPending);
+      const sellerSnapPending = await creditBudget(tx, sellerTeam.id, 0);
+      void sellerSnapPending;
+      const buyerBudgetAfter = buyerSnapPending.budget;
+      const sellerBudgetAfter = sellerTeam.budget;
 
       const dbNext = await nextTransferWindowAfter({
         simulatedNow: input.simulatedNow,
@@ -715,6 +743,56 @@ export async function processNegotiation(
         (window.kind === "PENDING_NEXT" || window.kind === "OUT_OF_SEASON"
           ? window.next
           : buildFutureWindow(input.simulatedNow));
+
+      let pendingLoanId: string | null = null;
+      if (negotiation.type !== "PERMANENT") {
+        const loanDuration = ensureLoanDuration(negotiation.type as TransferType);
+        const startsAt = next.opensAt;
+        const endsAt = computeLoanEnds(
+          startsAt,
+          negotiation.type as TransferType,
+          negotiation.season?.endDate ?? null,
+        );
+        const existingLoan = await tx.loan.findUnique({
+          where: { negotiationId: negotiation.id },
+          select: { id: true, metadata: true },
+        });
+        const loanData = {
+          seasonId: negotiation.seasonId,
+          playerId: negotiation.playerId,
+          sellerTeamId: negotiation.sellerTeamId,
+          buyerTeamId: negotiation.buyerTeamId,
+          buyerId: negotiation.buyerId,
+          sellerId: negotiation.sellerId,
+          duration: loanDuration,
+          wageShareBuyerPct: negotiation.buyerSalaryPercent,
+          hasBuyOption: negotiation.buyoutOptionPrice !== null,
+          buyOptionPrice:
+            negotiation.buyoutOptionPrice !== null
+              ? Math.round(negotiation.buyoutOptionPrice)
+              : null,
+          fee: Math.round(negotiation.agreedPrice),
+          status: "AGREED_CLUB" as const,
+          startsAt,
+          endsAt,
+          completedAt: null,
+          squadRoleSnapshot: negotiation.squadRole,
+          metadata: {
+            ...((existingLoan?.metadata as Record<string, unknown> | null) ?? {}),
+            totalWageCost: Math.round(negotiation.agreedPrice),
+            acceptedWageShareBuyerPct: negotiation.buyerSalaryPercent,
+            acceptedBuyOptionPrice:
+              negotiation.buyoutOptionPrice !== null
+                ? Math.round(negotiation.buyoutOptionPrice)
+                : null,
+            acceptedDuration: loanDuration,
+          },
+        };
+        const saved = existingLoan
+          ? await tx.loan.update({ where: { id: existingLoan.id, }, data: loanData })
+          : await tx.loan.create({ data: { ...loanData, negotiationId: negotiation.id } });
+        pendingLoanId = saved.id;
+      }
 
       await tx.negotiation.update({
         where: { id: negotiation.id },
@@ -728,6 +806,20 @@ export async function processNegotiation(
       });
 
       for (const loser of ranking.losers) {
+        const loserNegotiation = competitors.find((candidate) => candidate.id === loser.id);
+        if (
+          loserNegotiation &&
+          ["AGREED_PENDING_WINDOW", "AGREED_ACTIVE", "AGREED_CLUB"].includes(
+            loserNegotiation.status,
+          ) &&
+          loserNegotiation.agreedPrice > 0
+        ) {
+          await releaseBudget(
+            tx,
+            loserNegotiation.buyerTeamId,
+            Math.round(loserNegotiation.agreedPrice),
+          );
+        }
         await tx.negotiation.update({
           where: { id: loser.id },
           data: { status: "CANCELLED", decidedAt: input.simulatedNow },
@@ -740,7 +832,7 @@ export async function processNegotiation(
         negotiationId: negotiation.id,
         effectiveDate: next.opensAt,
         transferId: null,
-        loanId: null,
+        loanId: pendingLoanId,
         budgetAfter: {
           buyerId: buyerTeam.id,
           sellerId: sellerTeam.id,
@@ -895,6 +987,16 @@ export async function finalizePlayerContract(
         data: { isLoaned: false, loanedToTeamId: null },
       });
 
+      // Al firmarse el contrato definitivamente: el comprador consume su
+      // presupuesto comprometido y el vendedor recibe el pago en su
+      // presupuesto líquido.
+      await settleCommittedTransfer({
+        tx,
+        buyerTeamId: negotiation.buyerTeamId,
+        sellerTeamId: negotiation.sellerTeamId,
+        amount: Math.round(transfer.fee),
+      });
+
       await tx.transfer.update({
         where: { id: transfer.id },
         data: {
@@ -981,6 +1083,19 @@ export async function finalizeLoanPlayerContract(
       message: "Negotiation not found",
     };
   }
+  const existingLoan = await prisma.loan.findFirst({
+    where: { negotiationId: negotiation.id },
+    orderBy: { createdAt: "desc" },
+  });
+  if (negotiation.status === "COMPLETED" && existingLoan?.status === "COMPLETED") {
+    return {
+      ok: true,
+      status: "COMPLETED",
+      negotiationId: negotiation.id,
+      loanId: existingLoan.id,
+      effectiveDate: existingLoan.completedAt ?? input.simulatedNow,
+    };
+  }
   if (negotiation.type === "PERMANENT") {
     return {
       ok: false,
@@ -996,10 +1111,7 @@ export async function finalizeLoanPlayerContract(
     };
   }
 
-  const loan = await prisma.loan.findFirst({
-    where: { negotiationId: negotiation.id },
-    orderBy: { createdAt: "desc" },
-  });
+  const loan = existingLoan;
   if (!loan) {
     return {
       ok: false,
@@ -1055,6 +1167,34 @@ export async function finalizeLoanPlayerContract(
           loanedToTeamId: negotiation.buyerTeamId,
         },
       });
+
+      // Al firmarse la cesión: el comprador consume su presupuesto
+      // comprometido y el vendedor recibe el pago. En los préstamos el
+      // importe a liquidar es el coste salarial total acordado
+      // (guardado en metadata.totalWageCost) más la opción de compra si la
+      // hubiera. Si no se puede recuperar, usamos el `fee` acordado.
+      const meta = (loan.metadata as Record<string, unknown> | null) ?? {};
+      const metaTotalRaw = meta.totalWageCost;
+      const metaBuyOptionRaw = meta.proposedBuyOptionPrice ?? meta.acceptedBuyOptionPrice;
+      const metaTotal =
+        typeof metaTotalRaw === "number" && Number.isFinite(metaTotalRaw)
+          ? Math.max(0, Math.round(metaTotalRaw))
+          : Math.max(0, Math.round(loan.fee));
+      const metaBuyOption =
+        loan.hasBuyOption && loan.buyOptionPrice
+          ? Math.max(0, Math.round(loan.buyOptionPrice))
+          : typeof metaBuyOptionRaw === "number" && Number.isFinite(metaBuyOptionRaw)
+            ? Math.max(0, Math.round(metaBuyOptionRaw))
+            : 0;
+      const totalToSettle = metaTotal + metaBuyOption;
+
+      if (totalToSettle > 0) {
+        // Para los préstamos el pago al vendedor es de 0 (es una cesión
+        // gratuita en términos de traspaso). El fee + coste salarial ya se
+        // descontó del comprador al hacer commit. Solo necesitamos consumir
+        // el committedBudget del comprador.
+        await consumeBudget(tx, negotiation.buyerTeamId, totalToSettle);
+      }
 
       await tx.loan.update({
         where: { id: loan.id },

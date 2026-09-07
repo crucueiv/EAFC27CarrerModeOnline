@@ -9,12 +9,17 @@ import {
   type LoanDuration,
 } from "@/lib/transfers/loanNegotiationEngine";
 import {
-  finalizeLoanPlayerContract,
+  calculateLoanFinancialBreakdown,
+  calculateLoanWeeks,
+  computeLoanEndDate,
+} from "@/lib/transfers/loanEngine";
+import {
   processNegotiation,
   recordManagerRejectionCooldown,
 } from "@/lib/transfers/processNegotiation";
 import { getSimulatedCurrentDate } from "@/lib/calendar/simulatedClock";
 import { assertNotOwnPlayer } from "@/lib/transfers/ownership";
+import { releaseBudget } from "@/lib/transfers/budgetCommitment";
 
 type Body = {
   loanId: string;
@@ -36,6 +41,8 @@ type Metadata = {
   acceptedHasBuyOption?: boolean | null;
   acceptedBuyOptionPrice?: number | null;
   totalWageCost?: number;
+  weeklyWage?: number;
+  buyerWeeklyWageCost?: number;
   ineligible?: boolean;
   ineligibilityReason?: string | null;
 };
@@ -54,6 +61,14 @@ function ageOfPlayer(
   const m = now.getUTCMonth() - birthdate.getUTCMonth();
   if (m < 0 || (m === 0 && now.getUTCDate() < birthdate.getUTCDate())) age -= 1;
   return age > 0 ? age : fallback;
+}
+
+function transferTypeForDuration(
+  duration: LoanDuration,
+): "LOAN_SHORT_TERM" | "LOAN_1_YEAR" | "LOAN_2_YEARS" {
+  if (duration === "SHORT_TERM") return "LOAN_SHORT_TERM";
+  if (duration === "TWO_YEARS") return "LOAN_2_YEARS";
+  return "LOAN_1_YEAR";
 }
 
 export async function POST(request: Request) {
@@ -79,6 +94,7 @@ export async function POST(request: Request) {
       },
       buyerTeam: true,
       negotiation: true,
+      season: { select: { endDate: true } },
     },
   });
   if (!loan) return NextResponse.json({ error: "loan-not-found" }, { status: 404 });
@@ -434,14 +450,63 @@ export async function POST(request: Request) {
     });
   }
 
+  // Devolución de presupuesto comprometido: si la negociación queda en
+  // estado REJECTED / CANCELLED / EXPIRED y previamente el comprador tenía
+  // dinero comprometido (totalWageCost + buyOptionPrice), se devuelve a
+  // su presupuesto líquido y se reduce committedBudget.
+  const finalStatus = nextStatus ?? loan.status;
+  const isCancelling =
+    finalStatus === "REJECTED" ||
+    finalStatus === "CANCELLED" ||
+    finalStatus === "EXPIRED";
+  const hasCommittedLoanCost =
+    loan.status === "AGREED_CLUB" ||
+    loan.status === "WAITING_PLAYER_CONTRACT";
+  if (isCancelling && hasCommittedLoanCost) {
+    const reserved = meta.totalWageCost ?? 0;
+    const totalToRelease = Math.max(0, Math.round(reserved));
+    if (totalToRelease > 0) {
+      try {
+        await releaseBudget(prisma, loan.buyerTeamId, totalToRelease);
+      } catch (e) {
+        console.error("[loans/respond] releaseBudget failed:", e);
+      }
+    }
+  }
+
   // Al aceptar la cesión consolidamos el acuerdo entre clubes. El flujo
-  // deja la Negotiation en AGREED_CLUB, el Loan en WAITING_PLAYER_CONTRACT
-  // y, una vez que el jugador firme su contrato, finalizeLoanPlayerContract
-  // aplicará los efectos de roster/presupuesto.
+  // activa el préstamo inmediatamente si la ventana está abierta; si no,
+  // deja la activación programada para la apertura de la siguiente ventana.
   let processResult: Awaited<ReturnType<typeof processNegotiation>> | null = null;
   if (body.action === "ACCEPT" && loan.negotiation) {
     const simulatedNow = buyerSimulatedNow;
-    const totalWageCost = meta.totalWageCost ?? 0;
+    const acceptedDuration =
+      nextMeta.acceptedDuration ??
+      nextMeta.proposedDuration ??
+      meta.proposedDuration ??
+      loan.duration;
+    const acceptedWageShareBuyerPct =
+      nextMeta.acceptedWageShareBuyerPct ??
+      nextMeta.proposedWageShareBuyerPct ??
+      meta.proposedWageShareBuyerPct ??
+      loan.wageShareBuyerPct;
+    const weeklyWage =
+      typeof meta.weeklyWage === "number" && Number.isFinite(meta.weeklyWage)
+        ? Math.max(0, Math.round(meta.weeklyWage))
+        : 0;
+    const startsAt = loan.startsAt;
+    const endsAt = computeLoanEndDate({
+      startsAt,
+      duration: acceptedDuration as "SHORT_TERM" | "ONE_YEAR" | "TWO_YEARS",
+      seasonEndDate: loan.season.endDate,
+    });
+    const weeks = calculateLoanWeeks(startsAt, endsAt);
+    const totalWageCost = calculateLoanFinancialBreakdown({
+      weeklyWage,
+      wageShareBuyerPct: acceptedWageShareBuyerPct,
+      weeks,
+      buyOptionPrice: 0,
+    }).totalWageCost;
     const buyOptionPrice =
       nextMeta.acceptedBuyOptionPrice ??
       meta.proposedBuyOptionPrice ??
@@ -451,6 +516,10 @@ export async function POST(request: Request) {
       meta.proposedHasBuyOption ??
       loan.hasBuyOption;
 
+    // El dinero total a reservar del comprador es el coste salarial total
+    // acordado más la opción de compra (si la hay). La opción de compra
+    // se paga únicamente al ejecutar la opción (loanEngine), no ahora, así
+    // que solo añadimos al agreedPrice el coste salarial.
     await prisma.negotiation.update({
       where: { id: loan.negotiation.id },
       data: {
@@ -460,16 +529,11 @@ export async function POST(request: Request) {
             ? Math.round(buyOptionPrice)
             : null,
         offeredWage: totalWageCost,
-        buyerSalaryPercent:
-          nextMeta.acceptedWageShareBuyerPct ??
-          meta.proposedWageShareBuyerPct ??
-          loan.wageShareBuyerPct,
+        buyerSalaryPercent: acceptedWageShareBuyerPct,
         sellerSalaryPercent:
-          100 -
-          (nextMeta.acceptedWageShareBuyerPct ??
-            meta.proposedWageShareBuyerPct ??
-            loan.wageShareBuyerPct),
+          100 - acceptedWageShareBuyerPct,
         squadRole: loan.squadRoleSnapshot ?? "ROTACION",
+        type: transferTypeForDuration(acceptedDuration as LoanDuration),
       },
     });
 
@@ -508,7 +572,15 @@ export async function POST(request: Request) {
   });
 
   return NextResponse.json({
-    status: nextStatus ?? loan.status,
+    status:
+      processResult?.ok && processResult.loanId
+        ? processResult.status
+        : nextStatus ?? loan.status,
+    loanId: processResult?.ok ? processResult.loanId : loan.id,
+    activated:
+      processResult?.ok &&
+      processResult.loanId !== null &&
+      processResult.status === "COMPLETED",
     tension: nextTension,
     message,
     proposed: {

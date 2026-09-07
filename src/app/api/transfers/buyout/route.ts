@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { generateReleaseClauseEmail } from "@/lib/emails/templates";
 import { getOrCreateActiveSeason } from "@/lib/seasons";
 import { assertNotOwnPlayer } from "@/lib/transfers/ownership";
+import { commitBudget, getBudgetSnapshot } from "@/lib/transfers/budgetCommitment";
 
 type TransferStatus =
   | "PROPOSED"
@@ -77,26 +78,17 @@ export async function POST(request: Request) {
     }
     console.log(`[buyout] userTeam=${userTeam.name} (${userTeam.id}), budget=${userTeam.budget}`);
 
-    const committedTransferFee = await prisma.transfer.aggregate({
-      where: {
-        buyerTeamId: userTeam.id,
-        status: { in: ACTIVE_TRANSFER_STATUS },
-        fee: { gt: 0 }
-      },
-      _sum: { fee: true }
-    }).then((result) => Number(result._sum?.fee ?? 0));
+    const committedBudget = Math.max(0, userTeam.committedBudget);
 
-    const committedBudget = Math.max(0, userTeam.budget - committedTransferFee);
-
-    if (releaseClause > committedBudget && !userTeam.name.toLowerCase().includes("demo")) {
-      console.warn(`[buyout] insufficient committed budget: ${committedBudget} < ${releaseClause}`);
+    if (releaseClause > userTeam.budget && !userTeam.name.toLowerCase().includes("demo")) {
+      console.warn(`[buyout] insufficient liquid budget: ${userTeam.budget} < ${releaseClause}`);
       return NextResponse.json(
         {
           success: false,
           reason: "INSUFFICIENT_FUNDS",
           budget: userTeam.budget,
           committedBudget,
-          message: `Presupuesto comprometido insuficiente (${committedBudget} € < ${releaseClause} €)`
+          message: `Presupuesto líquido insuficiente (${userTeam.budget} € < ${releaseClause} €)`
         },
         { status: 400 }
       );
@@ -163,6 +155,31 @@ export async function POST(request: Request) {
       }, { status: 409 });
     }
 
+    // Movemos el dinero de la cláusula del presupuesto líquido del comprador
+    // al comprometido. Si la negociación con el jugador fracasa y se cancela
+    // la transferencia, se devolverá automáticamente. Cuando el jugador
+    // firme el contrato, el dinero comprometido se consume y se paga al
+    // vendedor. Para free-agents no hay club vendedor, así que solo se
+    // descuenta del presupuesto líquido y se incrementa el comprometido
+    // hasta que se cierre el traspaso.
+    const feeToCommit = isFreeAgentTransfer ? 0 : Math.max(0, Math.round(releaseClause));
+    if (feeToCommit > 0) {
+      const snap = await getBudgetSnapshot(prisma, userTeam.id);
+      if (snap.budget < feeToCommit) {
+        return NextResponse.json(
+          {
+            success: false,
+            reason: "INSUFFICIENT_FUNDS",
+            budget: snap.budget,
+            committedBudget: snap.committedBudget,
+            message: `Presupuesto líquido insuficiente (${snap.budget} € < ${feeToCommit} €)`,
+          },
+          { status: 400 },
+        );
+      }
+      await commitBudget(prisma, userTeam.id, feeToCommit);
+    }
+
     await prisma.transfer.create({
       data: {
         seasonId: activeSeason.id,
@@ -225,8 +242,8 @@ export async function POST(request: Request) {
     return NextResponse.json({
       success: true,
       requiresContractNegotiation: true,
-      remainingBudget: userTeam.budget,
-      committedBudget,
+      remainingBudget: Math.max(0, userTeam.budget - feeToCommit),
+      committedBudget: committedBudget + feeToCommit,
       teamName: userTeam.name,
       message: isFreeAgentTransfer
         ? "Se ha abierto la negociación salarial del agente libre sin contactar con ningún club."

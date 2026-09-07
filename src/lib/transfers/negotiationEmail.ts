@@ -8,6 +8,7 @@ import {
   type CooldownReasonLiteral,
 } from "@/lib/transfers/negotiationRules";
 import { processNegotiation, recordManagerRejectionCooldown } from "@/lib/transfers/processNegotiation";
+import { releaseBudget } from "@/lib/transfers/budgetCommitment";
 import {
   NEGOTIATION_EMAIL_TEMPLATES,
   getEmailTemplateById,
@@ -119,7 +120,16 @@ export async function deliverPendingEmailsForRecipient(
         state: "PENDING_DELIVERY",
       },
       include: {
-        negotiation: { select: { id: true, buyerTeamId: true, sellerTeamId: true, playerId: true } },
+        negotiation: {
+          select: {
+            id: true,
+            buyerTeamId: true,
+            sellerTeamId: true,
+            playerId: true,
+            status: true,
+            agreedPrice: true,
+          },
+        },
       },
     });
 
@@ -129,6 +139,18 @@ export async function deliverPendingEmailsForRecipient(
     for (const e of pending) {
       if (isEmailVisible(input.recipientCurrentDate, e.simulatedSentAt)) {
         if (input.recipientCurrentDate.getTime() > e.expiresAt.getTime()) {
+          if (
+            ["AGREED_PENDING_WINDOW", "AGREED_ACTIVE", "AGREED_CLUB"].includes(
+              e.negotiation.status,
+            ) &&
+            e.negotiation.agreedPrice > 0
+          ) {
+            await releaseBudget(
+              tx,
+              e.negotiation.buyerTeamId,
+              e.negotiation.agreedPrice,
+            );
+          }
           await tx.negotiationEmail.update({
             where: { id: e.id },
             data: { state: "EXPIRED" },
@@ -202,6 +224,18 @@ export async function respondToNegotiationEmail(
     });
 
     if (input.response === "DENY") {
+      if (
+        ["AGREED_PENDING_WINDOW", "AGREED_ACTIVE", "AGREED_CLUB"].includes(
+          email.negotiation.status,
+        ) &&
+        email.negotiation.agreedPrice > 0
+      ) {
+        await releaseBudget(
+          tx,
+          email.negotiation.buyerTeamId,
+          email.negotiation.agreedPrice,
+        );
+      }
       await tx.negotiation.update({
         where: { id: email.negotiationId },
         data: { status: "REJECTED", decidedAt: input.simulatedNow },

@@ -3,7 +3,12 @@
 import { useState, useEffect } from "react";
 import { PhoneOff, PhoneCall, Send, AlertTriangle, ChevronLeft, ChevronRight } from "lucide-react";
 import { getManagerAction } from "@/app/api/managers/managers";
-import { calculateLoanWageShare, calculateLoanWageCost } from "@/lib/transfers/loanEngine";
+import {
+  calculateLoanWageShare,
+  calculateLoanWageCost,
+  calculateLoanWeeks,
+  computeLoanEndDate,
+} from "@/lib/transfers/loanEngine";
 import { RivalManagerCard } from "./RivalManagerCard";
 
 export type LoanDuration = "SHORT_TERM" | "ONE_YEAR" | "TWO_YEARS";
@@ -30,9 +35,13 @@ type Props = {
     startsAt: string;
     endsAt: string;
     weeks: number;
+    seasonEndAt?: string | null;
   };
   totalWageCost: number;
   weeklyWage?: number;
+  buyerWeeklyWageCost?: number;
+  buyOptionPrice?: number;
+  totalLoanCost?: number;
   loanId: string;
   buyerFreeBudget?: number;
   buyerTotalBudget?: number;
@@ -55,8 +64,10 @@ export default function LoanNegotiationModal({
   managerAvatarUrl: initialManagerAvatarUrl,
   initialMessage,
   schedule,
-  totalWageCost,
   weeklyWage = 0,
+  buyerWeeklyWageCost = 0,
+  buyOptionPrice: initialBuyOptionPrice = 0,
+  totalLoanCost: initialTotalLoanCost = 0,
   loanId,
   buyerFreeBudget,
   buyerTotalBudget,
@@ -140,17 +151,35 @@ export default function LoanNegotiationModal({
     return "bg-rose-600";
   };
 
-  const currentWeeklyWage = weeklyWage > 0
-    ? weeklyWage
-    : schedule.weeks > 0
-      ? Math.round((totalWageCost / schedule.weeks) / (proposal.wageShareBuyerPct / 100 || 1))
+  // El salario base es independiente del porcentaje que asume el club
+  // comprador y debe permanecer estable durante toda la negociación.
+  const currentStartsAt = new Date(schedule.startsAt);
+  const currentEndsAt = computeLoanEndDate({
+    startsAt: currentStartsAt,
+    duration: proposal.duration,
+    seasonEndDate: schedule.seasonEndAt
+      ? new Date(schedule.seasonEndAt)
+      : new Date(schedule.endsAt),
+  });
+  const currentWeeks = Math.max(
+    1,
+    calculateLoanWeeks(currentStartsAt, currentEndsAt),
+  );
+  const playerWeeklyWage = Math.max(0, weeklyWage);
+  const buyerWeeklyWage = calculateLoanWageShare(
+    playerWeeklyWage,
+    proposal.wageShareBuyerPct,
+  );
+  const buyerTotalWage = calculateLoanWageCost(
+    playerWeeklyWage,
+    proposal.wageShareBuyerPct,
+    currentWeeks,
+  );
+  const currentBuyOptionPrice =
+    proposal.hasBuyOption && proposal.buyOptionPrice && proposal.buyOptionPrice > 0
+      ? proposal.buyOptionPrice
       : 0;
-  const currentBuyerWeekly = calculateLoanWageShare(currentWeeklyWage, proposal.wageShareBuyerPct);
-  const currentTotalWage = calculateLoanWageCost(currentWeeklyWage, proposal.wageShareBuyerPct, schedule.weeks);
-  const currentBuyOptionPrice = proposal.hasBuyOption && proposal.buyOptionPrice && proposal.buyOptionPrice > 0
-    ? proposal.buyOptionPrice
-    : 0;
-  const currentLoanTotalCost = currentTotalWage + currentBuyOptionPrice;
+  const currentLoanTotalCost = buyerTotalWage;
   const hasBudgetCap = typeof buyerFreeBudget === "number";
   const exceedsBudget = hasBudgetCap && currentLoanTotalCost > (buyerFreeBudget as number);
 
@@ -158,7 +187,7 @@ export default function LoanNegotiationModal({
     if (busy) return;
     if ((action === "COUNTER" || action === "ACCEPT") && exceedsBudget) {
       setLastManagerMessage(
-        `El coste total de la cesión (${formatEuro(currentLoanTotalCost)}) supera el presupuesto libre de tu club (${formatEuro(buyerFreeBudget as number)}). Ajusta la duración, el porcentaje de sueldo o la opción de compra.`,
+        `El coste salarial de la cesión (${formatEuro(currentLoanTotalCost)}) supera el presupuesto libre de tu club (${formatEuro(buyerFreeBudget as number)}). Ajusta la duración o el porcentaje de sueldo.`,
       );
       return;
     }
@@ -180,18 +209,28 @@ export default function LoanNegotiationModal({
       const data = await res.json();
       if (data.error === "loan-finalized" ||
           data.status === "ACCEPTED" ||
+          data.status === "COMPLETED" ||
+          data.status === "AGREED_PENDING_WINDOW" ||
           data.status === "REJECTED" ||
           data.status === "CANCELLED") {
         const finalStatus =
           data.status === "ACCEPTED" ||
+          data.status === "COMPLETED" ||
+          data.status === "AGREED_PENDING_WINDOW" ||
           data.status === "REJECTED" ||
           data.status === "CANCELLED"
             ? data.status
             : "REJECTED";
         setStatus(finalStatus);
         setLastManagerMessage(
-          data.message ?? "La cesión ya ha finalizado. Puedes colgar la llamada.",
+          data.message ??
+            (data.status === "COMPLETED"
+              ? "Cesión activada. El jugador se incorpora a tu plantilla con su contrato actual."
+              : "La cesión ya ha finalizado. Puedes colgar la llamada."),
         );
+        if (data.status === "COMPLETED" || data.status === "AGREED_PENDING_WINDOW") {
+          setTimeout(() => onCompleted(), 1500);
+        }
         return;
       }
       if (data.error) {
@@ -209,7 +248,13 @@ export default function LoanNegotiationModal({
           managerMsg = data.message ?? "Acuerdo alcanzado. Cerrando...";
         }
         setLastManagerMessage(managerMsg);
-        if (nextStatusValue === "ACCEPTED" || nextStatusValue === "REJECTED" || nextStatusValue === "CANCELLED") {
+        if (
+          nextStatusValue === "ACCEPTED" ||
+          nextStatusValue === "COMPLETED" ||
+          nextStatusValue === "AGREED_PENDING_WINDOW" ||
+          nextStatusValue === "REJECTED" ||
+          nextStatusValue === "CANCELLED"
+        ) {
           setTimeout(() => onCompleted(), 1500);
         }
       }
@@ -241,7 +286,13 @@ export default function LoanNegotiationModal({
             teamPrimaryColor={sellerTeamPrimaryColor ?? null}
             teamShortName={sellerTeamShortName ?? null}
             isLive={status === "PROPOSED" || status === "COUNTERED"}
-            isFinished={status === "ACCEPTED" || status === "REJECTED" || status === "CANCELLED"}
+            isFinished={
+              status === "ACCEPTED" ||
+              status === "COMPLETED" ||
+              status === "AGREED_PENDING_WINDOW" ||
+              status === "REJECTED" ||
+              status === "CANCELLED"
+            }
             secondsElapsed={secondsElapsed}
             subtitle={`Cesión de ${playerName}`}
           />
@@ -364,25 +415,25 @@ export default function LoanNegotiationModal({
 
           <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-2.5 text-[11px] text-slate-300 space-y-1">
             <div className="flex items-center justify-between">
-              <span className="text-slate-400">Sueldo semanal jugador:</span>
-              <strong className="font-mono">{formatEuro(currentWeeklyWage)}</strong>
+              <span className="text-slate-400">Salario semanal del jugador:</span>
+              <strong className="font-mono">{formatEuro(playerWeeklyWage)}</strong>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-slate-400">Tú pagas ({proposal.wageShareBuyerPct}%):</span>
-              <strong className="font-mono text-emerald-400">{formatEuro(currentBuyerWeekly)}/sem</strong>
+              <span className="text-slate-400">Tu parte semanal ({proposal.wageShareBuyerPct}%):</span>
+              <strong className="font-mono text-emerald-400">{formatEuro(buyerWeeklyWage)}/sem</strong>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-slate-400">Coste total cesión ({schedule.weeks} sem):</span>
-              <strong className="font-mono text-white">{formatEuro(currentTotalWage)}</strong>
+              <span className="text-slate-400">Coste salarial ({currentWeeks} sem):</span>
+              <strong className="font-mono text-white">{formatEuro(buyerTotalWage)}</strong>
             </div>
             {currentBuyOptionPrice > 0 ? (
               <div className="flex items-center justify-between">
-                <span className="text-slate-400">Opción de compra:</span>
+                <span className="text-slate-400">Opción de compra (futura):</span>
                 <strong className="font-mono text-white">{formatEuro(currentBuyOptionPrice)}</strong>
               </div>
             ) : null}
             <div className="flex items-center justify-between border-t border-slate-800 pt-1.5">
-              <span className="text-slate-400">Coste total cesión:</span>
+              <span className="text-slate-400">Coste reservado:</span>
               <strong className={`font-mono ${exceedsBudget ? "text-rose-400" : "text-emerald-300"}`}>
                 {formatEuro(currentLoanTotalCost)}
               </strong>
@@ -410,7 +461,7 @@ export default function LoanNegotiationModal({
                 ) : null}
                 {exceedsBudget ? (
                   <p className="text-[10px] text-rose-400 pt-1 font-semibold">
-                    El coste total supera el presupuesto libre de tu club. Ajusta la propuesta.
+                    El coste salarial supera el presupuesto libre de tu club. Ajusta la propuesta.
                   </p>
                 ) : null}
               </>

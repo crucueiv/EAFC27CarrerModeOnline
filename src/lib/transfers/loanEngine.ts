@@ -2,6 +2,7 @@ import type { PrismaClient, Prisma, Loan } from "@prisma/client";
 import { prisma as defaultPrisma } from "@/lib/prisma";
 import { withSerializableTransaction } from "@/lib/calendar/calendarDb";
 import { getSimulatedCurrentDate } from "@/lib/calendar/simulatedClock";
+import { activateLoanInTransaction } from "@/lib/transfers/loanActivationService";
 
 export type LoanType = "SHORT_TERM" | "ONE_YEAR" | "TWO_YEARS";
 
@@ -42,6 +43,71 @@ export function calculateLoanWageCost(
 ): number {
   const safeWeeks = Math.max(1, Math.floor(Number.isFinite(weeks) ? weeks : 1));
   return Math.round(calculateLoanWageShare(weeklyWage, wageShareBuyerPct) * safeWeeks);
+}
+
+export type LoanFinancialBreakdownInput = {
+  weeklyWage: number;
+  wageShareBuyerPct: number;
+  weeks: number;
+  buyOptionPrice?: number | null;
+};
+
+export type LoanFinancialBreakdown = {
+  weeklyWage: number;
+  buyerWeeklyWage: number;
+  totalWageCost: number;
+  buyOptionPrice: number;
+  totalLoanCost: number;
+};
+
+/**
+ * Calcula el desglose financiero completo de una cesión:
+ *  - `weeklyWage`: sueldo semanal del jugador (lo paga el club propietario
+ *    y se reparte entre comprador y vendedor).
+ *  - `buyerWeeklyWage`: parte del sueldo que paga el club cesionario.
+ *  - `totalWageCost`: coste salarial total que paga el cesionario durante
+ *    toda la cesión.
+ *  - `buyOptionPrice`: precio de la opción de compra (0 si no hay).
+ *  - `totalLoanCost`: suma del coste salarial más la opción de compra.
+ *
+ * Esta función se usa en backend para garantizar que el frontend siempre
+ * muestre los valores correctos sin tener que recalcularlos.
+ */
+export function calculateLoanFinancialBreakdown(
+  input: LoanFinancialBreakdownInput,
+): LoanFinancialBreakdown {
+  const weeklyWage = Math.max(0, Number.isFinite(input.weeklyWage) ? input.weeklyWage : 0);
+  const wageShareBuyerPct = clampPercent(input.wageShareBuyerPct);
+  const weeks = Math.max(1, Math.floor(Number.isFinite(input.weeks) ? input.weeks : 1));
+  const buyOptionPrice = Math.max(
+    0,
+    Number.isFinite(input.buyOptionPrice) ? Number(input.buyOptionPrice ?? 0) : 0,
+  );
+
+  const buyerWeeklyWage = calculateLoanWageShare(weeklyWage, wageShareBuyerPct);
+  const totalWageCost = calculateLoanWageCost(weeklyWage, wageShareBuyerPct, weeks);
+  const totalLoanCost = totalWageCost + buyOptionPrice;
+
+  return {
+    weeklyWage,
+    buyerWeeklyWage,
+    totalWageCost,
+    buyOptionPrice,
+    totalLoanCost,
+  };
+}
+
+/**
+ * Calcula el número de semanas entre dos fechas (inclusive del extremo
+ * inicial, exclusivo del final). Usado para determinar el coste salarial
+ * de una cesión ya activa o para mostrar la información al usuario.
+ */
+export function calculateLoanWeeks(startsAt: Date, endsAt: Date): number {
+  if (!(startsAt instanceof Date) || !(endsAt instanceof Date)) return 0;
+  if (Number.isNaN(startsAt.getTime()) || Number.isNaN(endsAt.getTime())) return 0;
+  const diff = endsAt.getTime() - startsAt.getTime();
+  if (diff <= 0) return 0;
+  return Math.max(1, Math.ceil(diff / (7 * 24 * 60 * 60 * 1000)));
 }
 
 export type ProcessExpiredLoansResult = {
@@ -278,33 +344,15 @@ export async function activateLoan(input: ActivateLoanInput): Promise<LoanOpResu
   const prisma = input.prismaClient ?? defaultPrisma;
   if (!prisma) return { ok: false, reason: "PRISMA_UNAVAILABLE" };
 
-    try {
+  try {
     return await withSerializableTransaction(prisma, async (tx) => {
-      const loan = await tx.loan.findUnique({
-        where: { id: input.loanId },
-        select: {
-          id: true,
-          status: true,
-          playerId: true,
-          buyerTeamId: true,
-          sellerTeamId: true,
-          seasonId: true,
-        },
+      const result = await activateLoanInTransaction(tx, {
+        loanId: input.loanId,
+        simulatedNow: input.simulatedNow,
       });
-      if (!loan) return { ok: false as const, reason: "LOAN_NOT_FOUND" };
-      if (loan.status === "WAITING_PLAYER_CONTRACT" || loan.status === "COMPLETED") {
-        return { ok: true as const, status: "ACTIVE" as const };
-      }
-      if (loan.status !== "ACCEPTED" && loan.status !== "AGREED_CLUB") {
-        return { ok: false as const, reason: `INVALID_STATUS:${loan.status}` };
-      }
-
-      await tx.loan.update({
-        where: { id: loan.id },
-        data: { status: "WAITING_PLAYER_CONTRACT", completedAt: null },
-      });
-
-      return { ok: true as const, status: "ACTIVE" as const };
+      return result.ok
+        ? { ok: true as const, status: "ACTIVE" as const }
+        : { ok: false as const, reason: result.reason };
     });
   } catch (e) {
     return { ok: false, reason: e instanceof Error ? e.message : "UNKNOWN_ERROR" };

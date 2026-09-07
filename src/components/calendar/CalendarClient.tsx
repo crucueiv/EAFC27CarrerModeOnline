@@ -39,6 +39,15 @@ type MonthResponse = {
   lockReason: string | null;
   transferWindows: WindowDto[];
   matches: MatchDto[];
+  userManagers: Array<{
+    userId: string;
+    name: string;
+    avatarUrl: string | null;
+    teamId: string;
+    teamName: string;
+    currentDate: string | null;
+    isCurrentUser: boolean;
+  }>;
 };
 
 const MONTHS_ES = [
@@ -133,6 +142,18 @@ export default function CalendarClient() {
       const arr = matchesByIso.get(iso) ?? [];
       arr.push(m);
       matchesByIso.set(iso, arr);
+    }
+  }
+  const managersByIso = new Map<string, MonthResponse["userManagers"]>();
+  if (data) {
+    for (const manager of data.userManagers) {
+      if (manager.isCurrentUser || !manager.currentDate) continue;
+      const date = new Date(manager.currentDate);
+      if (Number.isNaN(date.getTime())) continue;
+      const iso = `${date.getUTCFullYear()}-${pad2(date.getUTCMonth() + 1)}-${pad2(date.getUTCDate())}`;
+      const managers = managersByIso.get(iso) ?? [];
+      managers.push(manager);
+      managersByIso.set(iso, managers);
     }
   }
 
@@ -324,6 +345,7 @@ export default function CalendarClient() {
             const isInSeason = cell.date.getTime() >= seasonStart.getTime() && cell.date.getTime() <= seasonEnd.getTime();
             const isWindowOpen = data.transferWindows.some((w) => inWindowRange(cell.date!, w.opensAt, w.closesAt));
             const dayMatches = matchesByIso.get(cell.iso) ?? [];
+            const dayManagers = managersByIso.get(cell.iso) ?? [];
 
             return (
               <div
@@ -382,6 +404,22 @@ export default function CalendarClient() {
                     <p className="text-[10px] text-[var(--theme-muted)]">+{dayMatches.length - 2} más</p>
                   )}
                 </div>
+                  {dayManagers.length > 0 && (
+                    <div className="absolute bottom-1 left-1 flex max-w-[calc(100%-0.5rem)] items-center gap-1">
+                      {dayManagers.map((manager) => (
+                        <img
+                          key={manager.userId}
+                          src={manager.avatarUrl ?? "/default-avatar.svg"}
+                          alt={`${manager.name} · ${manager.teamName}`}
+                          title={`${manager.name} · ${manager.teamName}`}
+                          className="h-6 w-6 rounded-full border-2 border-[var(--theme-card)] object-cover shadow-sm"
+                          onError={(event) => {
+                            event.currentTarget.src = "/default-avatar.svg";
+                          }}
+                        />
+                      ))}
+                    </div>
+                  )}
               </div>
             );
           })}

@@ -5,6 +5,7 @@ import {
   returnLoanedPlayer as engineReturnLoanedPlayer,
   executeLoanBuyOption as engineExecuteLoanBuyOption,
   computeLoanEndDate,
+  calculateLoanWageCost,
   type LoanType,
 } from "@/lib/transfers/loanEngine";
 
@@ -15,6 +16,8 @@ export type LoanScheduleInput = {
   seasonStartDate: Date;
   seasonEndDate: Date;
   isTransferWindowOpen: boolean;
+  weeklyWage?: number;
+  wageShareBuyerPct?: number;
   now?: Date;
 };
 
@@ -36,7 +39,16 @@ export function computeLoanSchedule(input: LoanScheduleInput): LoanSchedule {
     seasonEndDate: input.seasonEndDate,
   });
   const weeks = Math.max(1, Math.ceil((endsAt.getTime() - startsAt.getTime()) / ONE_WEEK_MS));
-  return { startsAt, endsAt, weeks, totalWeeklyWageCost: 0 };
+  return {
+    startsAt,
+    endsAt,
+    weeks,
+    totalWeeklyWageCost: calculateLoanWageCost(
+      input.weeklyWage ?? 0,
+      input.wageShareBuyerPct ?? 0,
+      weeks,
+    ),
+  };
 }
 
 function seasonStartDateNextCycle(now: Date): Date {

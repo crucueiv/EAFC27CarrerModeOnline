@@ -929,6 +929,8 @@ export default function PlayerDetailModal({
             initialMessage={loanProposalData.greeting}
             schedule={loanProposalData.schedule}
             totalWageCost={loanProposalData.totalWageCost}
+            weeklyWage={loanProposalData.weeklyWage ?? 0}
+            buyerWeeklyWageCost={loanProposalData.buyerWeeklyWageCost ?? 0}
             loanId={loanProposalData.loanId}
             buyerFreeBudget={budgetInfo.free}
             buyerTotalBudget={budgetInfo.total}
@@ -936,11 +938,10 @@ export default function PlayerDetailModal({
             onClose={() => setActiveDialog("NONE")}
             onCompleted={() => {
               setActiveDialog("NONE");
-              setTransferPhase("CONTRACT_PENDING");
+              setTransferPhase("OWN_PLAYER");
               setBuyoutResultMsg(
-                `¡Acuerdo de cesión alcanzado con ${sellerTeamName}! Se ha enviado una notificación a tu Sección de Correos para acordar el contrato del jugador.`
+                `¡Cesión activada! ${player.name} pasa a tu plantilla con el contrato que ya tenía en ${sellerTeamName}.`
               );
-              setActiveDialog("BUYOUT_RESULT");
             }}
           />
         ) : null

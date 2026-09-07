@@ -3,6 +3,7 @@ import { prisma as defaultPrisma } from "@/lib/prisma";
 import { withSerializableTransaction } from "@/lib/calendar/calendarDb";
 import { getSimulatedCurrentDate } from "@/lib/calendar/simulatedClock";
 import { processExpiredLoans, executeLoanBuyOption } from "@/lib/transfers/loanEngine";
+import { activateLoanInTransaction } from "@/lib/transfers/loanActivationService";
 import { deliverPendingEmailsForRecipient } from "@/lib/transfers/negotiationEmail";
 
 export type ProcessPendingNegotiationsInput = {
@@ -74,41 +75,24 @@ export async function processPendingNegotiations(
             },
           });
         } else {
-          const startsAt = simulatedNow;
-          const endsAt = new Date(startsAt);
-          if (fresh.type === "LOAN_SHORT_TERM") {
-            endsAt.setUTCMonth(endsAt.getUTCMonth() + 6);
-          } else {
-            endsAt.setUTCFullYear(endsAt.getUTCFullYear() + (fresh.type === "LOAN_2_YEARS" ? 2 : 1));
-          }
-          await tx.loan.create({
-            data: {
-              seasonId: fresh.seasonId,
-              playerId: fresh.playerId,
-              sellerTeamId: fresh.sellerTeamId,
-              buyerTeamId: fresh.buyerTeamId,
-              duration:
-                fresh.type === "LOAN_SHORT_TERM"
-                  ? "SHORT_TERM"
-                  : fresh.type === "LOAN_1_YEAR"
-                    ? "ONE_YEAR"
-                    : "TWO_YEARS",
-              wageShareBuyerPct: 50,
-              hasBuyOption: false,
-              fee: Math.round(fresh.agreedPrice),
-              status: "WAITING_PLAYER_CONTRACT",
-              startsAt,
-              endsAt,
-              completedAt: null,
-              negotiationId: fresh.id,
-            },
+          const loan = await tx.loan.findUnique({
+            where: { negotiationId: fresh.id },
+            select: { id: true },
           });
+          if (!loan) throw new Error("Associated loan not found");
+          const activated = await activateLoanInTransaction(tx, {
+            loanId: loan.id,
+            simulatedNow,
+          });
+          if (!activated.ok) throw new Error(`Loan activation failed: ${activated.reason}`);
         }
 
-        await tx.negotiation.update({
-          where: { id: fresh.id },
-          data: { status: "AGREED_CLUB", decidedAt: simulatedNow, effectiveDate: simulatedNow },
-        });
+        if (fresh.type === "PERMANENT") {
+          await tx.negotiation.update({
+            where: { id: fresh.id },
+            data: { status: "AGREED_CLUB", decidedAt: simulatedNow, effectiveDate: simulatedNow },
+          });
+        }
       });
       processed += 1;
     } catch (e) {

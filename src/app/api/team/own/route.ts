@@ -55,22 +55,12 @@ export async function GET() {
       primaryColor: true,
       shortName: true,
       budget: true,
+      committedBudget: true,
     },
   });
 
-  const committedTransferFee = await prisma.transfer
-    .aggregate({
-      where: {
-        buyerTeamId: ownClubTeamId,
-        status: { in: ["PROPOSED", "ACCEPTED"] },
-        fee: { gt: 0 },
-      },
-      _sum: { fee: true },
-    })
-    .then((result) => Number(result._sum?.fee ?? 0));
-
-  const committedBudget = Math.max(0, committedTransferFee);
-  const freeBudget = Math.max(0, (team?.budget ?? 0) - committedBudget);
+  const committedBudget = Math.max(0, team?.committedBudget ?? 0);
+  const freeBudget = Math.max(0, team?.budget ?? 0);
 
   return NextResponse.json({
     ownClubTeamId,
