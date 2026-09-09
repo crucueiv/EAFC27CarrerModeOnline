@@ -1,8 +1,19 @@
 export type LoanDuration = "SHORT_TERM" | "ONE_YEAR" | "TWO_YEARS";
 
+export type LoanNegotiationPhase =
+  | "DURATION"
+  | "BUY_OPTION"
+  | "WAGE"
+  | "BUY_OPTION_PRICE";
+
 export type LoanQuoteCategory =
   | "greeting"
+  | "durationAccepted"
   | "rejectionDuration"
+  | "buyOptionYesAccepted"
+  | "buyOptionNoAccepted"
+  | "buyOptionDecisionRejected"
+  | "wageAcceptedContinue"
   | "rejectionWage"
   | "rejectionBuyOption"
   | "counterOfferWage"
@@ -21,6 +32,14 @@ export const LOAN_QUOTE_BANKS: Record<LoanQuoteCategory, string[]> = {
     "Buenas tardes. Soy {manager} y le atiendo por parte de {seller}. {player} necesita minutos, y ustedes parecen el destino ideal. ¿Qué presupuesto manejan?",
     "Qué tal. {manager} al habla, mánager de {seller}. Hace días que me suena el nombre de {player} para una salida, así que dígame, ¿qué traen sobre la mesa?",
   ],
+  durationAccepted: [
+    "De acuerdo, {durationLabel} me parece un plazo razonable para {player}. Pero antes de cerrar nada, hablemos del resto de condiciones. ¿Contemplan opción de compra?",
+    "Vale, la duración me cuadra. {durationLabel} le dará tiempo a {player} para coger ritmo sin desestabilizar la planificación de {seller}. Siguiente punto: ¿hay opción de compra sobre la mesa?",
+    "Aceptamos {durationLabel}. Ahora la pregunta importante: ¿quieren tener la posibilidad de quedarse con {player} definitivamente, o es una cesión pura?",
+    "{durationLabel} está bien, no pongo pegas por ese lado. Avancemos: ¿cesión limpia o con opción de compra al final?",
+    "Perfecto, {durationLabel} encaja con nuestros planes en {seller} para {player}. Dígame: ¿incluimos opción de compra o solo préstamo?",
+    "Por la duración no hay problema, me vale {durationLabel}. Ahora necesito saber: ¿quieren tener la llave para fichar a {player} definitivamente?",
+  ],
   rejectionDuration: [
     "Esas condiciones temporales no me convencen. Una cesión a {durationLabel} no encaja con el plan que tenemos en {seller} para {player}.",
     "No, esa duración no la acepto. {player} necesita un plan claro, y {durationLabel} no se ajusta al proyecto deportivo de {seller}.",
@@ -28,6 +47,38 @@ export const LOAN_QUOTE_BANKS: Record<LoanQuoteCategory, string[]> = {
     "Lo siento, pero {durationLabel} no me sirve ni a mí ni a {player}. Necesito algo que nos permita reevaluar al futbolista antes de que vuelva a {seller}.",
     "Esa ventana de {durationLabel} se me queda corta para un proyecto serio. Si quieren a {player} tendrán que pensar en otra cesión más larga.",
     "Ni de broma. {durationLabel} no encaja con la planificación de la plantilla. Si quieren a {player}, hablemos de una cesión que nos deje margen para reinsertarle en {seller}.",
+  ],
+  buyOptionYesAccepted: [
+    "Bien, incluiremos la opción de compra en el acuerdo. Ya negociaremos la cifra cuando toque. Ahora hablemos del reparto salarial de {player}.",
+    "De acuerdo, opción de compra contemplada. Pero primero lo primero: ¿qué porcentaje del sueldo de {player} están dispuestos a asumir durante la cesión?",
+    "Acepto negociar una opción de compra. La cifra la discutimos al final. Ahora pasemos al tema del salario: ¿cuánto de la ficha de {player} cubren?",
+    "Opción de compra, apuntado. Pero el dinero manda, y alguien tiene que pagar la nómina. ¿Qué parte del sueldo de {player} se quedan ustedes?",
+    "Muy bien, cesión con opción de compra. Antes de hablar de cifras de traspaso, resolvamos quién paga qué del sueldo de {player}.",
+    "Incluimos la opción de compra, sí. Ahora el balón está en su tejado: ¿cuánto del salario de {player} asumen ustedes semanalmente?",
+  ],
+  buyOptionNoAccepted: [
+    "Perfecto, cesión pura sin opción de compra. {player} vuelve a {seller} al final del periodo. Hablemos del reparto salarial.",
+    "Sin opción de compra, entendido. Es un préstamo limpio, {player} regresa a casa cuando acabe. ¿Qué porcentaje del sueldo asumen ustedes?",
+    "De acuerdo, sin opción de compra. {player} seguirá siendo nuestro. Ahora: ¿cuánto de su ficha semanal pagan durante la cesión?",
+    "Aceptado: cesión temporal sin compromisos futuros. Pero alguien tiene que pagar la nómina de {player}. ¿Cuánto se quedan?",
+    "Cesión sin opción de compra, me parece bien. {player} es nuestro y volverá a {seller}. Pasemos al tema peliagudo: el sueldo.",
+    "Sin opción de compra, de acuerdo. {player} es propiedad de {seller} y punto. Ahora dígame: ¿qué parte del salario cubren ustedes?",
+  ],
+  buyOptionDecisionRejected: [
+    "Ni hablar. {player} es propiedad de {seller} y no vamos a poner su futuro en juego con una opción de compra. Cesión pura o nada.",
+    "¿Opción de compra por {player}? Olvídense. Este jugador tiene futuro en {seller} y no voy a arriesgar perderlo. Solo cesión.",
+    "No. La directiva de {seller} ha sido clara: {player} no tiene cláusula de salida. Si quieren cesión, será sin opción de compra.",
+    "Rotundamente no. {player} es un activo estratégico para {seller}. La cesión es temporal y punto. Nada de opciones de compra.",
+    "Mire, {player} no está en venta ni directa ni indirectamente. Si les interesa la cesión, es sin opción de compra. ¿Seguimos o no?",
+    "Eso no lo voy a aceptar. {player} vuelve a {seller} cuando acabe la cesión, sin peros. Quítense la opción de compra de la cabeza.",
+  ],
+  wageAcceptedContinue: [
+    "El {wageShareBuyerPct}% del sueldo me parece justo. Bien, ahora queda el capítulo final: definamos el precio de la opción de compra por {player}.",
+    "Aceptamos ese reparto salarial. {wageShareBuyerPct}% por su parte cuadra los números. Solo falta pactar la opción de compra y firmamos.",
+    "Con {wageShareBuyerPct}% cubrimos los gastos en {seller}. Último punto sobre la mesa: ¿cuánto proponen para la opción de compra de {player}?",
+    "Correcto, {wageShareBuyerPct}% es un trato equitativo para la ficha de {player}. Vamos al capítulo final: la cifra de la opción de compra.",
+    "{wageShareBuyerPct}% por su parte, nosotros cubrimos el resto. Me convence. Ahora dígame: ¿cuánto ponen sobre la mesa para quedarse con {player}?",
+    "El salario queda resuelto con ese {wageShareBuyerPct}%. Perfecto. Ahora la última pieza del puzzle: el precio de la opción de compra.",
   ],
   rejectionWage: [
     "¿{wageShareBuyerPct}% del sueldo? Eso es una miseria. {player} cobra bien y se merece que ambas partes aporten de verdad.",
@@ -199,6 +250,114 @@ export type LoanAcceptance = {
   tensionDelta: number;
   closeness: number;
 };
+
+export type DurationAcceptance = {
+  accepted: boolean;
+  tensionDelta: number;
+  counterDuration?: LoanDuration;
+};
+
+/**
+ * Evalúa si el mánager rival acepta la duración propuesta.
+ * - Jugadores clave (OVR >= 85 o rol CLAVE): solo SHORT_TERM
+ * - Jugadores importantes (OVR 80-84 o rol IMPORTANTE): SHORT_TERM o ONE_YEAR
+ * - Rotación: cualquier duración (sesgo leve contra TWO_YEARS)
+ */
+export function evaluateLoanDuration(
+  proposedDuration: LoanDuration,
+  playerOverall: number,
+  playerRole: string | null,
+): DurationAcceptance {
+  if (playerRole === "CLAVE" || playerOverall >= 85) {
+    if (proposedDuration === "SHORT_TERM") {
+      return { accepted: true, tensionDelta: 0 };
+    }
+    return {
+      accepted: false,
+      tensionDelta: 20,
+      counterDuration: "SHORT_TERM",
+    };
+  }
+  if (playerRole === "IMPORTANTE" || playerOverall >= 80) {
+    if (proposedDuration === "TWO_YEARS") {
+      return {
+        accepted: false,
+        tensionDelta: 15,
+        counterDuration: "ONE_YEAR",
+      };
+    }
+    return { accepted: true, tensionDelta: 0 };
+  }
+  if (proposedDuration === "TWO_YEARS" && Math.random() > 0.6) {
+    return {
+      accepted: false,
+      tensionDelta: 10,
+      counterDuration: "ONE_YEAR",
+    };
+  }
+  return { accepted: true, tensionDelta: 0 };
+}
+
+export type BuyOptionDecisionAcceptance = {
+  accepted: boolean;
+  tensionDelta: number;
+  managerPreference: boolean;
+};
+
+/**
+ * Evalúa si el mánager acepta incluir/excluir opción de compra.
+ * - Jugadores clave: NUNCA opción de compra
+ * - Jóvenes promesas (potencial >= 85 y edad <= 22): pueden rechazar opción para no perderlos
+ */
+export function evaluateBuyOptionDecision(
+  proposedHasBuyOption: boolean,
+  playerOverall: number,
+  playerPotential: number,
+  playerAge: number,
+  playerRole: string | null,
+): BuyOptionDecisionAcceptance {
+  if (playerRole === "CLAVE" || playerOverall >= 85) {
+    if (proposedHasBuyOption) {
+      return { accepted: false, tensionDelta: 20, managerPreference: false };
+    }
+    return { accepted: true, tensionDelta: 0, managerPreference: false };
+  }
+  if (playerPotential >= 85 && playerAge <= 22 && proposedHasBuyOption) {
+    if (Math.random() > 0.5) {
+      return { accepted: false, tensionDelta: 15, managerPreference: false };
+    }
+  }
+  return { accepted: true, tensionDelta: 0, managerPreference: proposedHasBuyOption };
+}
+
+export type BuyOptionPriceAcceptance = {
+  accepted: boolean;
+  tensionDelta: number;
+  isLowball: boolean;
+  counterPrice?: number;
+};
+
+/**
+ * Evalúa si el precio de opción de compra propuesto es aceptable.
+ */
+export function evaluateBuyOptionPrice(
+  proposedPrice: number,
+  params: LoanNegotiationParams,
+): BuyOptionPriceAcceptance {
+  if (proposedPrice < params.lowballBuyOptionThreshold) {
+    return { accepted: false, tensionDelta: 100, isLowball: true };
+  }
+  if (proposedPrice >= params.targetBuyOptionPrice) {
+    return { accepted: true, tensionDelta: 0, isLowball: false };
+  }
+  const counter = Math.max(
+    params.lowballBuyOptionThreshold,
+    Math.round((proposedPrice + params.targetBuyOptionPrice) / 2),
+  );
+  const gap = (params.targetBuyOptionPrice - proposedPrice) / params.targetBuyOptionPrice;
+  const tensionDelta = Math.round(gap * 25);
+  return { accepted: false, tensionDelta, isLowball: false, counterPrice: counter };
+}
 
 export function evaluateLoanWageOffer(
   proposedPct: number,

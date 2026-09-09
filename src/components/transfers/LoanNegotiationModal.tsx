@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { PhoneOff, PhoneCall, Send, AlertTriangle, ChevronLeft, ChevronRight } from "lucide-react";
+import { PhoneOff, PhoneCall, Send, AlertTriangle } from "lucide-react";
 import { getManagerAction } from "@/app/api/managers/managers";
 import {
   calculateLoanWageShare,
@@ -9,9 +9,14 @@ import {
   calculateLoanWeeks,
   computeLoanEndDate,
 } from "@/lib/transfers/loanEngine";
+import {
+  type LoanDuration,
+  type LoanNegotiationPhase,
+  DURATION_LABELS,
+} from "@/lib/transfers/loanNegotiationEngine";
 import { RivalManagerCard } from "./RivalManagerCard";
 
-export type LoanDuration = "SHORT_TERM" | "ONE_YEAR" | "TWO_YEARS";
+export type { LoanDuration };
 
 type LoanProposal = {
   duration: LoanDuration;
@@ -31,6 +36,7 @@ type Props = {
   managerName?: string;
   managerAvatarUrl?: string;
   initialMessage: string;
+  initialIneligible?: boolean;
   schedule: {
     startsAt: string;
     endsAt: string;
@@ -50,7 +56,22 @@ type Props = {
   onCompleted: () => void;
 };
 
-const FALLBACK_AVATAR = "https://res.cloudinary.com/oiugg8m6/image/upload/v1788133891/qvbsomljzzcmickbhyad.png";
+const FALLBACK_AVATAR =
+  "https://res.cloudinary.com/oiugg8m6/image/upload/v1788133891/qvbsomljzzcmickbhyad.png";
+
+const phaseLabels: Record<LoanNegotiationPhase, string> = {
+  DURATION: "Fase 1: Duración",
+  BUY_OPTION: "Fase 2: Opción de Compra",
+  WAGE: "Fase 3: Salario",
+  BUY_OPTION_PRICE: "Fase 4: Precio Opción",
+};
+
+const phaseSubmitLabels: Record<LoanNegotiationPhase, string> = {
+  DURATION: "Proponer Duración",
+  BUY_OPTION: "Confirmar Opción",
+  WAGE: "Proponer Salario",
+  BUY_OPTION_PRICE: "Proponer Precio",
+};
 
 export default function LoanNegotiationModal({
   open,
@@ -63,6 +84,7 @@ export default function LoanNegotiationModal({
   managerName: initialManagerName,
   managerAvatarUrl: initialManagerAvatarUrl,
   initialMessage,
+  initialIneligible = false,
   schedule,
   weeklyWage = 0,
   buyerWeeklyWageCost = 0,
@@ -79,14 +101,21 @@ export default function LoanNegotiationModal({
     duration: "ONE_YEAR",
     wageShareBuyerPct: 50,
     hasBuyOption: false,
-    buyOptionPrice: null,
+    buyOptionPrice: 1_000_000,
   });
+  const [currentPhase, setCurrentPhase] = useState<LoanNegotiationPhase>("DURATION");
   const [lastManagerMessage, setLastManagerMessage] = useState<string>(initialMessage);
-  const [tension, setTension] = useState(20);
-  const [status, setStatus] = useState<string>("PROPOSED");
+  const [tension, setTension] = useState(initialIneligible ? 100 : 20);
+  const [status, setStatus] = useState<string>(initialIneligible ? "REJECTED" : "PROPOSED");
   const [busy, setBusy] = useState(false);
   const [secondsElapsed, setSecondsElapsed] = useState(0);
-  const [currentStep, setCurrentStep] = useState<1 | 2 | 3 | 4>(1);
+
+  const [managerCounter, setManagerCounter] = useState<{
+    counterDuration?: LoanDuration | null;
+    counterWageShareBuyerPct?: number | null;
+    counterBuyOptionPrice?: number | null;
+    managerPrefersBuyOption?: boolean | null;
+  } | null>(null);
 
   const [managerName, setManagerName] = useState<string>(
     initialManagerName || "Cargando Mánager...",
@@ -96,20 +125,37 @@ export default function LoanNegotiationModal({
   );
   const [isLoadingManager, setIsLoadingManager] = useState(false);
 
+  const isCallFinished =
+    status === "ACCEPTED" ||
+    status === "COMPLETED" ||
+    status === "AGREED_PENDING_WINDOW" ||
+    status === "REJECTED" ||
+    status === "CANCELLED";
+
   useEffect(() => {
-    if (!open) return;
+    if (!open || isCallFinished) return;
     const timer = setInterval(() => setSecondsElapsed((prev) => prev + 1), 1000);
     return () => clearInterval(timer);
-  }, [open]);
+  }, [open, isCallFinished]);
 
   useEffect(() => {
     if (!open) return;
-    setCurrentStep(1);
+    setCurrentPhase("DURATION");
     setLastManagerMessage(initialMessage);
+    if (initialIneligible) {
+      setStatus("REJECTED");
+      setTension(100);
+    } else {
+      setStatus("PROPOSED");
+      setTension(20);
+    }
+    setManagerCounter(null);
+
     let cancelled = false;
     setManagerName(initialManagerName || "Cargando Mánager...");
     setManagerAvatar(initialManagerAvatarUrl || null);
     setIsLoadingManager(true);
+
     if (!sellerTeamId) {
       setManagerName(initialManagerName || `Cuerpo técnico de ${sellerTeamName}`);
       setManagerAvatar(initialManagerAvatarUrl || FALLBACK_AVATAR);
@@ -118,6 +164,7 @@ export default function LoanNegotiationModal({
         cancelled = true;
       };
     }
+
     getManagerAction(sellerTeamId)
       .then((mgr) => {
         if (cancelled) return;
@@ -132,10 +179,19 @@ export default function LoanNegotiationModal({
       .finally(() => {
         if (!cancelled) setIsLoadingManager(false);
       });
+
     return () => {
       cancelled = true;
     };
-  }, [open, sellerTeamId, initialManagerName, initialManagerAvatarUrl, sellerTeamName, initialMessage]);
+  }, [
+    open,
+    sellerTeamId,
+    initialManagerName,
+    initialManagerAvatarUrl,
+    sellerTeamName,
+    initialMessage,
+    initialIneligible,
+  ]);
 
   if (!open) return null;
 
@@ -183,11 +239,11 @@ export default function LoanNegotiationModal({
   const hasBudgetCap = typeof buyerFreeBudget === "number";
   const exceedsBudget = hasBudgetCap && currentLoanTotalCost > (buyerFreeBudget as number);
 
-  async function send(action: "COUNTER" | "ACCEPT" | "REJECT" | "HANGUP") {
-    if (busy) return;
-    if ((action === "COUNTER" || action === "ACCEPT") && exceedsBudget) {
+  async function handleSendPhaseProposal() {
+    if (busy || isCallFinished) return;
+    if (currentPhase === "WAGE" && exceedsBudget) {
       setLastManagerMessage(
-        `El coste salarial de la cesión (${formatEuro(currentLoanTotalCost)}) supera el presupuesto libre de tu club (${formatEuro(buyerFreeBudget as number)}). Ajusta la duración o el porcentaje de sueldo.`,
+        `El coste salarial (${formatEuro(currentLoanTotalCost)}) supera tu presupuesto libre (${formatEuro(buyerFreeBudget as number)}). Ajusta el porcentaje.`,
       );
       return;
     }
@@ -198,80 +254,237 @@ export default function LoanNegotiationModal({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           loanId,
-          action,
-          counterDuration: action === "COUNTER" ? proposal.duration : undefined,
-          counterWageShareBuyerPct: action === "COUNTER" ? proposal.wageShareBuyerPct : undefined,
-          counterHasBuyOption: action === "COUNTER" ? proposal.hasBuyOption : undefined,
+          action: "COUNTER",
+          phase: currentPhase,
+          counterDuration: currentPhase === "DURATION" ? proposal.duration : undefined,
+          counterHasBuyOption: currentPhase === "BUY_OPTION" ? proposal.hasBuyOption : undefined,
+          counterWageShareBuyerPct: currentPhase === "WAGE" ? proposal.wageShareBuyerPct : undefined,
           counterBuyOptionPrice:
-            action === "COUNTER" && proposal.hasBuyOption ? proposal.buyOptionPrice : undefined,
+            currentPhase === "BUY_OPTION_PRICE" && proposal.hasBuyOption
+              ? proposal.buyOptionPrice
+              : undefined,
         }),
       });
       const data = await res.json();
-      if (data.error === "loan-finalized" ||
-          data.status === "ACCEPTED" ||
-          data.status === "COMPLETED" ||
-          data.status === "AGREED_PENDING_WINDOW" ||
-          data.status === "REJECTED" ||
-          data.status === "CANCELLED") {
-        const finalStatus =
-          data.status === "ACCEPTED" ||
-          data.status === "COMPLETED" ||
-          data.status === "AGREED_PENDING_WINDOW" ||
-          data.status === "REJECTED" ||
-          data.status === "CANCELLED"
-            ? data.status
-            : "REJECTED";
-        setStatus(finalStatus);
-        setLastManagerMessage(
-          data.message ??
-            (data.status === "COMPLETED"
-              ? "Cesión activada. El jugador se incorpora a tu plantilla con su contrato actual."
-              : "La cesión ya ha finalizado. Puedes colgar la llamada."),
-        );
-        if (data.status === "COMPLETED" || data.status === "AGREED_PENDING_WINDOW") {
-          setTimeout(() => onCompleted(), 1500);
-        }
+
+      if (data.error === "loan-finalized") {
+        setStatus("CANCELLED");
+        setLastManagerMessage("La llamada ya ha finalizado.");
         return;
       }
+
       if (data.error) {
         setLastManagerMessage(`Error: ${data.error}`);
-      } else {
-        setTension(data.tension ?? tension);
-        const nextStatusValue = data.status ?? status;
-        setStatus(nextStatusValue);
-        let managerMsg = data.message ?? "He analizado tu propuesta.";
-        if (action === "HANGUP" && nextStatusValue === "CANCELLED") {
-          managerMsg = "Has colgado la llamada. La cesión ha finalizado sin acuerdo.";
-        } else if (action === "REJECT" && nextStatusValue === "REJECTED") {
-          managerMsg = "Has rechazado la propuesta. La cesión ha finalizado sin acuerdo.";
-        } else if (nextStatusValue === "ACCEPTED") {
-          managerMsg = data.message ?? "Acuerdo alcanzado. Cerrando...";
-        }
-        setLastManagerMessage(managerMsg);
-        if (
-          nextStatusValue === "ACCEPTED" ||
-          nextStatusValue === "COMPLETED" ||
-          nextStatusValue === "AGREED_PENDING_WINDOW" ||
-          nextStatusValue === "REJECTED" ||
-          nextStatusValue === "CANCELLED"
-        ) {
-          setTimeout(() => onCompleted(), 1500);
+        return;
+      }
+
+      setTension(data.tension ?? tension);
+      setLastManagerMessage(data.message ?? "");
+
+      if (data.proposed) {
+        setManagerCounter({
+          counterDuration: data.proposed.counterDuration ?? null,
+          counterWageShareBuyerPct: data.proposed.counterWageShareBuyerPct ?? null,
+          counterBuyOptionPrice: data.proposed.counterBuyOptionPrice ?? null,
+          managerPrefersBuyOption: data.proposed.managerPrefersBuyOption ?? null,
+        });
+      }
+
+      const nextStatusValue = data.status ?? status;
+      setStatus(nextStatusValue);
+
+      if (data.currentPhase && data.currentPhase !== currentPhase) {
+        setCurrentPhase(data.currentPhase);
+        setManagerCounter(null);
+      }
+
+      const terminalStatuses = [
+        "ACCEPTED",
+        "COMPLETED",
+        "AGREED_PENDING_WINDOW",
+        "REJECTED",
+        "CANCELLED",
+      ];
+      if (terminalStatuses.includes(nextStatusValue)) {
+        if (nextStatusValue === "COMPLETED" || nextStatusValue === "AGREED_PENDING_WINDOW") {
+          setTimeout(() => onCompleted(), 2000);
         }
       }
-    } catch {
-      setLastManagerMessage("Has colgado la llamada. La cesión ha finalizado sin acuerdo.");
-      setStatus("CANCELLED");
-      setTimeout(() => onCompleted(), 1500);
+    } catch (err) {
+      console.error("[LoanNegotiationModal] error:", err);
+      setLastManagerMessage("Error de conexión durante la llamada.");
     } finally {
       setBusy(false);
     }
   }
 
-  const stepLabels: Record<1 | 2 | 3 | 4, string> = {
-    1: "Duración",
-    2: "¿Opción de compra?",
-    3: "% de sueldo",
-    4: "Importe traspaso",
+  async function handleAcceptCounter() {
+    if (busy || isCallFinished) return;
+    setBusy(true);
+    try {
+      if (currentPhase === "DURATION" && managerCounter?.counterDuration) {
+        setProposal((prev) => ({ ...prev, duration: managerCounter.counterDuration! }));
+      } else if (
+        currentPhase === "BUY_OPTION" &&
+        typeof managerCounter?.managerPrefersBuyOption === "boolean"
+      ) {
+        setProposal((prev) => ({
+          ...prev,
+          hasBuyOption: managerCounter.managerPrefersBuyOption!,
+        }));
+      } else if (
+        currentPhase === "WAGE" &&
+        typeof managerCounter?.counterWageShareBuyerPct === "number"
+      ) {
+        setProposal((prev) => ({
+          ...prev,
+          wageShareBuyerPct: managerCounter.counterWageShareBuyerPct!,
+        }));
+      } else if (
+        currentPhase === "BUY_OPTION_PRICE" &&
+        typeof managerCounter?.counterBuyOptionPrice === "number"
+      ) {
+        setProposal((prev) => ({
+          ...prev,
+          buyOptionPrice: managerCounter.counterBuyOptionPrice!,
+        }));
+      }
+
+      const res = await fetch("/api/loans/respond", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          loanId,
+          action: "ACCEPT",
+          phase: currentPhase,
+          counterDuration: managerCounter?.counterDuration ?? proposal.duration,
+          counterHasBuyOption:
+            typeof managerCounter?.managerPrefersBuyOption === "boolean"
+              ? managerCounter.managerPrefersBuyOption
+              : proposal.hasBuyOption,
+          counterWageShareBuyerPct:
+            managerCounter?.counterWageShareBuyerPct ?? proposal.wageShareBuyerPct,
+          counterBuyOptionPrice:
+            managerCounter?.counterBuyOptionPrice ?? proposal.buyOptionPrice,
+        }),
+      });
+      const data = await res.json();
+
+      if (data.error) {
+        setLastManagerMessage(`Error: ${data.error}`);
+        return;
+      }
+
+      setTension(data.tension ?? tension);
+      setLastManagerMessage(data.message ?? "");
+
+      if (data.proposed) {
+        setManagerCounter({
+          counterDuration: data.proposed.counterDuration ?? null,
+          counterWageShareBuyerPct: data.proposed.counterWageShareBuyerPct ?? null,
+          counterBuyOptionPrice: data.proposed.counterBuyOptionPrice ?? null,
+          managerPrefersBuyOption: data.proposed.managerPrefersBuyOption ?? null,
+        });
+      }
+
+      const nextStatusValue = data.status ?? status;
+      setStatus(nextStatusValue);
+
+      if (data.currentPhase && data.currentPhase !== currentPhase) {
+        setCurrentPhase(data.currentPhase);
+        setManagerCounter(null);
+      }
+
+      const terminalStatuses = [
+        "ACCEPTED",
+        "COMPLETED",
+        "AGREED_PENDING_WINDOW",
+        "REJECTED",
+        "CANCELLED",
+      ];
+      if (terminalStatuses.includes(nextStatusValue)) {
+        if (nextStatusValue === "COMPLETED" || nextStatusValue === "AGREED_PENDING_WINDOW") {
+          setTimeout(() => onCompleted(), 2000);
+        }
+      }
+    } catch (err) {
+      console.error("[LoanNegotiationModal] accept counter error:", err);
+      setLastManagerMessage("Error de conexión durante la llamada.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleHangup() {
+    if (busy || isCallFinished) return;
+    setBusy(true);
+    try {
+      await fetch("/api/loans/respond", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ loanId, action: "HANGUP" }),
+      });
+    } catch (err) {
+      console.error("[LoanNegotiationModal] hangup error:", err);
+    } finally {
+      setStatus("CANCELLED");
+      setTension(100);
+      setLastManagerMessage("Has colgado la llamada. La cesión ha finalizado sin acuerdo.");
+      setBusy(false);
+    }
+  }
+
+  const activePhases: LoanNegotiationPhase[] = proposal.hasBuyOption
+    ? ["DURATION", "BUY_OPTION", "WAGE", "BUY_OPTION_PRICE"]
+    : ["DURATION", "BUY_OPTION", "WAGE"];
+
+  const currentPhaseIndex = activePhases.indexOf(currentPhase);
+
+  const hasCounterForCurrentPhase =
+    (currentPhase === "DURATION" &&
+      Boolean(
+        managerCounter?.counterDuration &&
+          managerCounter.counterDuration !== proposal.duration,
+      )) ||
+    (currentPhase === "BUY_OPTION" &&
+      Boolean(
+        typeof managerCounter?.managerPrefersBuyOption === "boolean" &&
+          managerCounter.managerPrefersBuyOption !== proposal.hasBuyOption,
+      )) ||
+    (currentPhase === "WAGE" &&
+      Boolean(
+        typeof managerCounter?.counterWageShareBuyerPct === "number" &&
+          managerCounter.counterWageShareBuyerPct !== proposal.wageShareBuyerPct,
+      )) ||
+    (currentPhase === "BUY_OPTION_PRICE" &&
+      Boolean(
+        typeof managerCounter?.counterBuyOptionPrice === "number" &&
+          managerCounter.counterBuyOptionPrice !== proposal.buyOptionPrice,
+      ));
+
+  const getCounterButtonLabel = () => {
+    if (currentPhase === "DURATION" && managerCounter?.counterDuration) {
+      return `Aceptar ${DURATION_LABELS[managerCounter.counterDuration]}`;
+    }
+    if (
+      currentPhase === "BUY_OPTION" &&
+      typeof managerCounter?.managerPrefersBuyOption === "boolean"
+    ) {
+      return managerCounter.managerPrefersBuyOption ? "Aceptar Opción" : "Aceptar Sin Opción";
+    }
+    if (
+      currentPhase === "WAGE" &&
+      typeof managerCounter?.counterWageShareBuyerPct === "number"
+    ) {
+      return `Aceptar ${managerCounter.counterWageShareBuyerPct}%`;
+    }
+    if (
+      currentPhase === "BUY_OPTION_PRICE" &&
+      typeof managerCounter?.counterBuyOptionPrice === "number"
+    ) {
+      return `Aceptar ${formatEuro(managerCounter.counterBuyOptionPrice)}`;
+    }
+    return "Aceptar propuesta";
   };
 
   return (
@@ -285,20 +498,14 @@ export default function LoanNegotiationModal({
             teamCrestUrl={sellerTeamCrestUrl ?? null}
             teamPrimaryColor={sellerTeamPrimaryColor ?? null}
             teamShortName={sellerTeamShortName ?? null}
-            isLive={status === "PROPOSED" || status === "COUNTERED"}
-            isFinished={
-              status === "ACCEPTED" ||
-              status === "COMPLETED" ||
-              status === "AGREED_PENDING_WINDOW" ||
-              status === "REJECTED" ||
-              status === "CANCELLED"
-            }
+            isLive={!isCallFinished}
+            isFinished={isCallFinished}
             secondsElapsed={secondsElapsed}
             subtitle={`Cesión de ${playerName}`}
           />
           <div className="mt-3 inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900 border border-slate-800 text-xs font-mono font-semibold text-emerald-400">
-            <PhoneCall size={13} className={status === "PROPOSED" || status === "COUNTERED" ? "animate-pulse" : ""} />
-            <span>{formatTimer(secondsElapsed)}</span>
+            <PhoneCall size={13} className={!isCallFinished ? "animate-pulse" : ""} />
+            <span>{!isCallFinished ? formatTimer(secondsElapsed) : "Llamada Finalizada"}</span>
           </div>
         </div>
 
@@ -317,69 +524,105 @@ export default function LoanNegotiationModal({
         </div>
 
         <div className="px-4 pt-3 pb-2 flex items-center justify-center gap-1.5">
-          {([1, 2, 3, 4] as const).map((n) => (
+          {activePhases.map((p, idx) => (
             <span
-              key={n}
+              key={p}
               className={`h-1.5 rounded-full transition-all ${
-                n === currentStep ? "w-8 bg-emerald-500" : n < currentStep ? "w-4 bg-emerald-700" : "w-4 bg-slate-700"
+                idx === currentPhaseIndex
+                  ? "w-8 bg-emerald-500"
+                  : idx < currentPhaseIndex
+                    ? "w-4 bg-emerald-700"
+                    : "w-4 bg-slate-700"
               }`}
-              aria-label={`Paso ${n}: ${stepLabels[n]}`}
+              aria-label={phaseLabels[p]}
             />
           ))}
           <span className="ml-2 text-[10px] uppercase font-bold text-slate-400">
-            Paso {currentStep}/4 — {stepLabels[currentStep]}
+            {phaseLabels[currentPhase]}
           </span>
         </div>
 
         <div className="p-4 min-h-[100px] flex items-center justify-center bg-slate-900/60 border-b border-slate-800 text-xs">
-          <div className="bg-slate-800/80 border border-slate-700/60 rounded-2xl p-3 text-slate-200 leading-relaxed text-center w-full">
+          <div className="bg-slate-800/80 border border-slate-700/60 rounded-2xl p-3 text-slate-200 leading-relaxed text-center w-full shadow-inner">
             &quot;{lastManagerMessage}&quot;
           </div>
         </div>
 
         <div className="p-4 bg-slate-950/80 space-y-3">
-          {currentStep === 1 ? (
+          {currentPhase === "DURATION" && (
             <div>
-              <label className="text-[10px] font-bold uppercase text-slate-400 block mb-1">Duración de la cesión</label>
+              <label className="text-[10px] font-bold uppercase text-slate-400 block mb-1">
+                Duración de la cesión
+              </label>
               <select
                 value={proposal.duration}
-                onChange={(e) => setProposal({ ...proposal, duration: e.target.value as LoanDuration })}
-                className="w-full bg-slate-900 border border-slate-700 text-white rounded-lg p-2 text-xs focus:ring-1 focus:ring-emerald-500 outline-none"
+                onChange={(e) =>
+                  setProposal({ ...proposal, duration: e.target.value as LoanDuration })
+                }
+                disabled={busy || isCallFinished}
+                className="w-full bg-slate-900 border border-slate-700 text-white rounded-lg p-2 text-xs focus:ring-1 focus:ring-emerald-500 outline-none disabled:opacity-50"
               >
                 <option value="SHORT_TERM">Resto de temporada</option>
                 <option value="ONE_YEAR">1 temporada (1 año)</option>
                 <option value="TWO_YEARS">2 temporadas (2 años)</option>
               </select>
+              {managerCounter?.counterDuration && !isCallFinished && (
+                <p className="text-[11px] text-amber-400 mt-2 flex items-center gap-1 font-medium">
+                  💡 El mánager sugiere: {DURATION_LABELS[managerCounter.counterDuration]}
+                </p>
+              )}
             </div>
-          ) : null}
+          )}
 
-          {currentStep === 2 ? (
-            <div className="flex items-center gap-3">
-              <label className="text-xs font-semibold text-slate-300 flex items-center gap-2">
-                <input
-                  type="radio"
-                  checked={proposal.hasBuyOption}
-                  onChange={() => setProposal({ ...proposal, hasBuyOption: true, buyOptionPrice: proposal.buyOptionPrice ?? 1_000_000 })}
-                  className="accent-emerald-500"
-                />
-                Sí
+          {currentPhase === "BUY_OPTION" && (
+            <div>
+              <label className="text-[10px] font-bold uppercase text-slate-400 block mb-2">
+                ¿Incluir opción de compra al finalizar la cesión?
               </label>
-              <label className="text-xs font-semibold text-slate-300 flex items-center gap-2">
-                <input
-                  type="radio"
-                  checked={!proposal.hasBuyOption}
-                  onChange={() => setProposal({ ...proposal, hasBuyOption: false, buyOptionPrice: null })}
-                  className="accent-emerald-500"
-                />
-                No
-              </label>
+              <div className="flex items-center gap-4">
+                <label className="text-xs font-semibold text-slate-300 flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    checked={proposal.hasBuyOption}
+                    onChange={() =>
+                      setProposal({
+                        ...proposal,
+                        hasBuyOption: true,
+                        buyOptionPrice: proposal.buyOptionPrice ?? 1_000_000,
+                      })
+                    }
+                    disabled={busy || isCallFinished}
+                    className="accent-emerald-500"
+                  />
+                  Sí, pactar opción
+                </label>
+                <label className="text-xs font-semibold text-slate-300 flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    checked={!proposal.hasBuyOption}
+                    onChange={() => setProposal({ ...proposal, hasBuyOption: false })}
+                    disabled={busy || isCallFinished}
+                    className="accent-emerald-500"
+                  />
+                  No, cesión simple
+                </label>
+              </div>
+              {typeof managerCounter?.managerPrefersBuyOption === "boolean" && !isCallFinished && (
+                <p className="text-[11px] text-amber-400 mt-2 flex items-center gap-1 font-medium">
+                  💡 El mánager insiste en:{" "}
+                  {managerCounter.managerPrefersBuyOption
+                    ? "Con opción de compra"
+                    : "Cesión simple sin opción"}
+                </p>
+              )}
             </div>
-          ) : null}
+          )}
 
-          {currentStep === 3 ? (
+          {currentPhase === "WAGE" && (
             <div>
               <label className="text-[10px] font-bold uppercase text-slate-400 block mb-1">
-                Sueldo asumes: <strong className="text-emerald-400">{proposal.wageShareBuyerPct}%</strong>
+                Porcentaje de sueldo que asume tu club:{" "}
+                <strong className="text-emerald-400">{proposal.wageShareBuyerPct}%</strong>
               </label>
               <input
                 type="range"
@@ -387,13 +630,22 @@ export default function LoanNegotiationModal({
                 max={80}
                 step={5}
                 value={proposal.wageShareBuyerPct}
-                onChange={(e) => setProposal({ ...proposal, wageShareBuyerPct: Number(e.target.value) })}
-                className="w-full accent-emerald-500 mt-2"
+                onChange={(e) =>
+                  setProposal({ ...proposal, wageShareBuyerPct: Number(e.target.value) })
+                }
+                disabled={busy || isCallFinished}
+                className="w-full accent-emerald-500 mt-2 disabled:opacity-50"
               />
+              {managerCounter?.counterWageShareBuyerPct && !isCallFinished && (
+                <p className="text-[11px] text-amber-400 mt-2 flex items-center gap-1 font-medium">
+                  💡 El mánager pide que asumas al menos el{" "}
+                  {managerCounter.counterWageShareBuyerPct}% del sueldo.
+                </p>
+              )}
             </div>
-          ) : null}
+          )}
 
-          {currentStep === 4 && proposal.hasBuyOption ? (
+          {currentPhase === "BUY_OPTION_PRICE" && (
             <div>
               <label className="text-[10px] font-bold uppercase text-slate-400 block mb-1">
                 Precio Opción de Compra (€)
@@ -403,15 +655,20 @@ export default function LoanNegotiationModal({
                 min={100_000}
                 step={250_000}
                 value={proposal.buyOptionPrice ?? 0}
-                onChange={(e) => setProposal({ ...proposal, buyOptionPrice: Number(e.target.value) })}
-                className="w-full bg-slate-900 border border-slate-700 text-white rounded-lg p-2 text-xs focus:ring-1 focus:ring-emerald-500 outline-none font-mono"
+                onChange={(e) =>
+                  setProposal({ ...proposal, buyOptionPrice: Number(e.target.value) })
+                }
+                disabled={busy || isCallFinished}
+                className="w-full bg-slate-900 border border-slate-700 text-white rounded-lg p-2 text-xs focus:ring-1 focus:ring-emerald-500 outline-none font-mono disabled:opacity-50"
               />
+              {managerCounter?.counterBuyOptionPrice && !isCallFinished && (
+                <p className="text-[11px] text-amber-400 mt-2 flex items-center gap-1 font-medium">
+                  💡 El mánager pide al menos{" "}
+                  {formatEuro(managerCounter.counterBuyOptionPrice)} por la opción.
+                </p>
+              )}
             </div>
-          ) : null}
-
-          {currentStep === 4 && !proposal.hasBuyOption ? (
-            <p className="text-[11px] text-slate-500 italic">Sin opción de compra — pasamos directamente al envío.</p>
-          ) : null}
+          )}
 
           <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-2.5 text-[11px] text-slate-300 space-y-1">
             <div className="flex items-center justify-between">
@@ -434,7 +691,9 @@ export default function LoanNegotiationModal({
             ) : null}
             <div className="flex items-center justify-between border-t border-slate-800 pt-1.5">
               <span className="text-slate-400">Coste reservado:</span>
-              <strong className={`font-mono ${exceedsBudget ? "text-rose-400" : "text-emerald-300"}`}>
+              <strong
+                className={`font-mono ${exceedsBudget ? "text-rose-400" : "text-emerald-300"}`}
+              >
                 {formatEuro(currentLoanTotalCost)}
               </strong>
             </div>
@@ -442,7 +701,9 @@ export default function LoanNegotiationModal({
               <>
                 <div className="flex items-center justify-between">
                   <span className="text-slate-400">Presupuesto libre de tu club:</span>
-                  <strong className="font-mono text-emerald-400">{formatEuro(buyerFreeBudget as number)}</strong>
+                  <strong className="font-mono text-emerald-400">
+                    {formatEuro(buyerFreeBudget as number)}
+                  </strong>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-slate-400">Restante tras esta cesión:</span>
@@ -454,9 +715,11 @@ export default function LoanNegotiationModal({
                     {formatEuro((buyerFreeBudget as number) - currentLoanTotalCost)}
                   </strong>
                 </div>
-                {typeof buyerTotalBudget === "number" && typeof buyerCommittedBudget === "number" ? (
+                {typeof buyerTotalBudget === "number" &&
+                typeof buyerCommittedBudget === "number" ? (
                   <p className="text-[10px] text-slate-500 pt-1">
-                    Total: {formatEuro(buyerTotalBudget)} · Comprometido: {formatEuro(buyerCommittedBudget)}
+                    Total: {formatEuro(buyerTotalBudget)} · Comprometido:{" "}
+                    {formatEuro(buyerCommittedBudget)}
                   </p>
                 ) : null}
                 {exceedsBudget ? (
@@ -469,16 +732,28 @@ export default function LoanNegotiationModal({
           </div>
         </div>
 
-        {status === "REJECTED" || status === "CANCELLED" || status === "ACCEPTED" ? (
-          <div className="p-3 bg-slate-950 border-t border-slate-800">
+        {isCallFinished ? (
+          <div className="p-4 bg-slate-950 border-t border-slate-800 space-y-3">
+            <div
+              className={`p-3 rounded-xl text-sm font-semibold text-center ${
+                status === "ACCEPTED" ||
+                status === "COMPLETED" ||
+                status === "AGREED_PENDING_WINDOW"
+                  ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                  : "bg-rose-500/10 text-rose-400 border border-rose-500/20"
+              }`}
+            >
+              {status === "ACCEPTED" ||
+              status === "COMPLETED" ||
+              status === "AGREED_PENDING_WINDOW"
+                ? "Acuerdo alcanzado. El jugador se incorporará según lo pactado."
+                : "La llamada ha finalizado sin acuerdo."}
+            </div>
             <button
               type="button"
-              onClick={() => {
-                onClose();
-              }}
+              onClick={onClose}
               className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-rose-600 hover:bg-rose-500 text-white font-bold text-sm rounded-xl transition shadow-lg shadow-rose-900/30"
-              title="Colgar llamada y cerrar"
-              aria-label="Colgar llamada y cerrar"
+              title="Colgar llamada"
             >
               <PhoneOff size={16} />
               Colgar llamada y cerrar
@@ -487,57 +762,34 @@ export default function LoanNegotiationModal({
         ) : (
           <div className="p-3 bg-slate-950 border-t border-slate-800 flex items-center gap-2">
             <button
-              onClick={() => setCurrentStep((s) => (s > 1 ? ((s - 1) as 1 | 2 | 3 | 4) : s))}
-              disabled={currentStep === 1 || busy}
-              className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-white"
-              aria-label="Paso anterior"
+              onClick={handleSendPhaseProposal}
+              disabled={busy || (currentPhase === "WAGE" && exceedsBudget)}
+              className="flex-1 flex items-center justify-center gap-1.5 py-2.5 px-3 bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs rounded-xl transition disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-amber-900/20"
             >
-              <ChevronLeft size={16} />
+              <Send size={14} />
+              {phaseSubmitLabels[currentPhase]}
             </button>
-            {currentStep < 4 ? (
+
+            {hasCounterForCurrentPhase && (
               <button
-                onClick={() => {
-                  if (currentStep === 2 && !proposal.hasBuyOption) {
-                    setCurrentStep(3);
-                    return;
-                  }
-                  setCurrentStep((s) => (s < 4 ? ((s + 1) as 1 | 2 | 3 | 4) : s));
-                }}
+                onClick={handleAcceptCounter}
                 disabled={busy}
-                className="flex-1 flex items-center justify-center gap-1.5 py-2.5 px-3 bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs rounded-xl transition"
+                className="flex items-center gap-1.5 py-2.5 px-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition shadow-md shadow-emerald-900/20"
+                title="Aceptar sugerencia del mánager"
               >
-                Siguiente <ChevronRight size={14} />
-              </button>
-            ) : (
-              <button
-                onClick={() => send("COUNTER")}
-                disabled={busy || exceedsBudget}
-                className="flex-1 flex items-center justify-center gap-1.5 py-2.5 px-3 bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs rounded-xl transition disabled:opacity-50 disabled:cursor-not-allowed"
-                title={exceedsBudget ? "El coste total supera el presupuesto libre de tu club" : undefined}
-              >
-                <Send size={14} />
-                Enviar Oferta
+                <PhoneCall size={14} />
+                {getCounterButtonLabel()}
               </button>
             )}
+
             <button
-              onClick={() => {
-                void send("HANGUP");
-              }}
+              onClick={handleHangup}
               disabled={busy}
-              className="p-2.5 rounded-lg bg-rose-600/90 hover:bg-rose-600 text-white"
-              title="Colgar"
+              className="p-2.5 rounded-lg bg-rose-600/90 hover:bg-rose-600 text-white transition"
+              title="Colgar llamada"
               aria-label="Colgar"
             >
               <PhoneOff size={14} />
-            </button>
-            <button
-              onClick={() => send("ACCEPT")}
-              disabled={busy || exceedsBudget}
-              className="p-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50 disabled:cursor-not-allowed"
-              title={exceedsBudget ? "El coste total supera el presupuesto libre de tu club" : "Aceptar"}
-              aria-label="Aceptar"
-            >
-              <PhoneCall size={14} />
             </button>
           </div>
         )}

@@ -4,9 +4,14 @@ import { prisma } from "@/lib/prisma";
 import {
   computeLoanNegotiationParams,
   evaluateLoanWageOffer,
+  evaluateLoanDuration,
+  evaluateBuyOptionDecision,
+  evaluateBuyOptionPrice,
   getRandomLoanQuote,
   resolveSellerManagerName,
   type LoanDuration,
+  type LoanNegotiationPhase,
+  type LoanQuoteCategory,
 } from "@/lib/transfers/loanNegotiationEngine";
 import {
   calculateLoanFinancialBreakdown,
@@ -25,6 +30,7 @@ import { calculatePlayerValueAndClause } from "@/lib/transfers/pricingEngine";
 type Body = {
   loanId: string;
   action: "COUNTER" | "ACCEPT" | "REJECT" | "HANGUP";
+  phase?: LoanNegotiationPhase;
   counterDuration?: LoanDuration;
   counterWageShareBuyerPct?: number;
   counterHasBuyOption?: boolean;
@@ -33,6 +39,9 @@ type Body = {
 
 type Metadata = {
   currentTension?: number;
+  currentPhase?: LoanNegotiationPhase;
+  managerCounterDuration?: LoanDuration | null;
+  managerPrefersBuyOption?: boolean | null;
   proposedDuration?: LoanDuration;
   proposedWageShareBuyerPct?: number;
   proposedHasBuyOption?: boolean;
@@ -180,18 +189,7 @@ export async function POST(request: Request) {
     | null = null;
   let nextTension = clampTension(meta.currentTension ?? 20);
   const nextMeta: Metadata = { ...meta };
-  let messageCategory:
-    | "greeting"
-    | "rejectionDuration"
-    | "rejectionWage"
-    | "rejectionBuyOption"
-    | "counterOfferWage"
-    | "counterOfferBuyOption"
-    | "highTensionWarning"
-    | "lowballHangup"
-    | "accepted"
-    | "maxTensionHangup"
-    | "notInterested" = "greeting";
+  let messageCategory: LoanQuoteCategory = "greeting";
 
   let counterWageShareBuyerPct: number | null = null;
   let counterBuyOptionPrice: number | null = null;
@@ -235,7 +233,7 @@ export async function POST(request: Request) {
         console.error("[loans/respond] HANGUP cooldown failed:", e);
       }
     }
-  } else   if (body.action === "ACCEPT") {
+  } else if (body.action === "ACCEPT") {
     if (!loan.negotiation) {
       return NextResponse.json(
         { error: "missing-negotiation", reason: "Esta cesión no tiene una negociación asociada." },
@@ -256,60 +254,94 @@ export async function POST(request: Request) {
         { status: 409 },
       );
     }
-    // No marcamos `nextStatus = "ACCEPTED"` aquí. El estado final del Loan
-    // lo decide `processNegotiation` (COMPLETED si la ventana está abierta,
-    // AGREED_PENDING_WINDOW si hay que esperar a la siguiente). Si lo
-    // marcásemos como ACCEPTED antes y la transacción fallase, el Loan
-    // quedaría en un estado intermedio que no se puede reanudar.
-    nextStatus = null;
-    nextMeta.acceptedDuration = meta.proposedDuration ?? null;
-    nextMeta.acceptedWageShareBuyerPct = meta.proposedWageShareBuyerPct ?? null;
-    nextMeta.acceptedHasBuyOption = meta.proposedHasBuyOption ?? null;
-    nextMeta.acceptedBuyOptionPrice = meta.proposedBuyOptionPrice ?? null;
-    nextTension = 0;
-    messageCategory = "accepted";
-  } else if (body.action === "COUNTER") {
-    const currentDuration =
-      nextMeta.proposedDuration ?? meta.proposedDuration ?? loan.duration;
-    const currentWagePct =
-      nextMeta.proposedWageShareBuyerPct ??
-      meta.proposedWageShareBuyerPct ??
-      loan.wageShareBuyerPct;
-    const currentHasBuyOption =
-      nextMeta.proposedHasBuyOption ??
-      meta.proposedHasBuyOption ??
-      loan.hasBuyOption;
-    const currentBuyOptionPrice =
-      nextMeta.proposedBuyOptionPrice ??
-      meta.proposedBuyOptionPrice ??
-      loan.buyOptionPrice;
 
-    const durationChanged =
-      typeof body.counterDuration === "string" &&
-      body.counterDuration !== currentDuration;
-    const wageChanged =
-      typeof body.counterWageShareBuyerPct === "number" &&
-      body.counterWageShareBuyerPct !== currentWagePct;
-    const buyOptionChanged =
-      typeof body.counterHasBuyOption === "boolean" &&
-      (body.counterHasBuyOption !== currentHasBuyOption ||
-        (body.counterHasBuyOption &&
-          typeof body.counterBuyOptionPrice === "number" &&
-          body.counterBuyOptionPrice !== currentBuyOptionPrice));
+    const currentPhase: LoanNegotiationPhase = body.phase ?? meta.currentPhase ?? "DURATION";
 
-    let phase: "duration" | "wage" | "buyOption" | null = null;
-    if (durationChanged) phase = "duration";
-    else if (wageChanged) phase = "wage";
-    else if (buyOptionChanged) phase = "buyOption";
+    switch (currentPhase) {
+      case "DURATION": {
+        const acceptedDuration =
+          meta.managerCounterDuration ??
+          body.counterDuration ??
+          nextMeta.proposedDuration ??
+          meta.proposedDuration ??
+          loan.duration;
+        nextMeta.acceptedDuration = acceptedDuration;
+        nextMeta.proposedDuration = acceptedDuration;
+        nextMeta.currentPhase = "BUY_OPTION";
+        nextMeta.managerCounterDuration = null;
+        nextStatus = "COUNTERED";
+        messageCategory = "durationAccepted";
+        break;
+      }
+      case "BUY_OPTION": {
+        const managerPref =
+          typeof meta.managerPrefersBuyOption === "boolean"
+            ? meta.managerPrefersBuyOption
+            : typeof body.counterHasBuyOption === "boolean"
+              ? body.counterHasBuyOption
+              : (meta.proposedHasBuyOption ?? false);
+        nextMeta.acceptedHasBuyOption = managerPref;
+        nextMeta.proposedHasBuyOption = managerPref;
+        nextMeta.currentPhase = "WAGE";
+        nextMeta.managerPrefersBuyOption = null;
+        nextStatus = "COUNTERED";
+        messageCategory = managerPref ? "buyOptionYesAccepted" : "buyOptionNoAccepted";
+        break;
+      }
+      case "WAGE": {
+        const acceptedWage =
+          typeof body.counterWageShareBuyerPct === "number"
+            ? body.counterWageShareBuyerPct
+            : typeof meta.proposedWageShareBuyerPct === "number"
+              ? meta.proposedWageShareBuyerPct
+              : 50;
+        nextMeta.acceptedWageShareBuyerPct = acceptedWage;
+        nextMeta.proposedWageShareBuyerPct = acceptedWage;
 
-    if (durationChanged && typeof body.counterDuration === "string") {
-      nextMeta.proposedDuration = body.counterDuration;
+        const hasBuyOption =
+          nextMeta.acceptedHasBuyOption ??
+          meta.acceptedHasBuyOption ??
+          meta.proposedHasBuyOption ??
+          false;
+
+        if (hasBuyOption) {
+          nextMeta.currentPhase = "BUY_OPTION_PRICE";
+          nextStatus = "COUNTERED";
+          messageCategory = "wageAcceptedContinue";
+        } else {
+          autoAcceptedViaCounter = true;
+          nextMeta.acceptedDuration =
+            nextMeta.proposedDuration ?? meta.proposedDuration ?? loan.duration;
+          nextMeta.acceptedHasBuyOption = false;
+          nextMeta.acceptedBuyOptionPrice = null;
+          nextTension = 0;
+          messageCategory = "accepted";
+        }
+        break;
+      }
+      case "BUY_OPTION_PRICE": {
+        const acceptedPrice =
+          typeof body.counterBuyOptionPrice === "number"
+            ? body.counterBuyOptionPrice
+            : (meta.proposedBuyOptionPrice ?? 0);
+        nextMeta.acceptedBuyOptionPrice = acceptedPrice;
+        nextMeta.proposedBuyOptionPrice = acceptedPrice;
+
+        autoAcceptedViaCounter = true;
+        nextMeta.acceptedDuration =
+          nextMeta.proposedDuration ?? meta.proposedDuration ?? loan.duration;
+        nextMeta.acceptedWageShareBuyerPct =
+          nextMeta.proposedWageShareBuyerPct ??
+          meta.proposedWageShareBuyerPct ??
+          loan.wageShareBuyerPct;
+        nextMeta.acceptedHasBuyOption = true;
+        nextTension = 0;
+        messageCategory = "accepted";
+        break;
+      }
     }
-
-    const proposedPct =
-      typeof body.counterWageShareBuyerPct === "number"
-        ? body.counterWageShareBuyerPct
-        : currentWagePct;
+  } else if (body.action === "COUNTER") {
+    const currentPhase: LoanNegotiationPhase = body.phase ?? meta.currentPhase ?? "DURATION";
     const params = computeLoanNegotiationParams({
       playerOverall: loan.player.overall,
       playerPotential: loan.player.potential,
@@ -328,116 +360,166 @@ export async function POST(request: Request) {
         loan.hasBuyOption,
     });
 
-    const evaluation = evaluateLoanWageOffer(proposedPct, params);
-    const tooLongDuration =
-      nextMeta.proposedDuration === "TWO_YEARS" &&
-      (meta.proposedDuration ?? loan.duration) !== "TWO_YEARS";
-    const rejectDuration = phase === "duration" && tooLongDuration;
-
-    if (evaluation.shouldHangUp) {
-      lowballHangup = true;
-      nextStatus = "CANCELLED";
-      nextTension = 100;
-      messageCategory = "lowballHangup";
-    } else if (rejectDuration) {
-      nextMeta.proposedDuration = "ONE_YEAR";
-      nextTension = clampTension(nextTension + 25);
-      nextStatus = "COUNTERED";
-      messageCategory = "rejectionDuration";
-    } else if (
-      phase === "buyOption" &&
-      buyOptionChanged &&
-      typeof body.counterBuyOptionPrice === "number" &&
-      body.counterBuyOptionPrice < params.lowballBuyOptionThreshold
-    ) {
-      if (typeof body.counterHasBuyOption === "boolean") {
-        nextMeta.proposedHasBuyOption = body.counterHasBuyOption;
-      }
-      if (
-        body.counterHasBuyOption &&
-        typeof body.counterBuyOptionPrice === "number"
-      ) {
-        nextMeta.proposedBuyOptionPrice = body.counterBuyOptionPrice;
-        counterBuyOptionPrice = Math.max(
-          params.lowballBuyOptionThreshold,
-          Math.round(
-            (body.counterBuyOptionPrice + params.targetBuyOptionPrice) / 2,
-          ),
+    switch (currentPhase) {
+      case "DURATION": {
+        const proposed =
+          body.counterDuration ??
+          nextMeta.proposedDuration ??
+          meta.proposedDuration ??
+          loan.duration;
+        nextMeta.proposedDuration = proposed;
+        const result = evaluateLoanDuration(
+          proposed,
+          loan.player.overall,
+          loan.squadRoleSnapshot,
         );
-      }
-      nextTension = clampTension(nextTension + 20);
-      nextStatus = "COUNTERED";
-      messageCategory = "rejectionBuyOption";
-    } else if (phase === "wage" && !evaluation.autoAccept) {
-      if (typeof body.counterWageShareBuyerPct === "number") {
-        nextMeta.proposedWageShareBuyerPct = body.counterWageShareBuyerPct;
-      }
-      counterWageShareBuyerPct = evaluation.counterWageShareBuyerPct;
-      if (typeof body.counterHasBuyOption === "boolean") {
-        nextMeta.proposedHasBuyOption = body.counterHasBuyOption;
-        if (
-          body.counterHasBuyOption &&
-          typeof body.counterBuyOptionPrice === "number"
-        ) {
-          nextMeta.proposedBuyOptionPrice = body.counterBuyOptionPrice;
-          if (counterBuyOptionPrice === null) {
-            counterBuyOptionPrice = Math.max(
-              params.lowballBuyOptionThreshold,
-              Math.round(
-                (body.counterBuyOptionPrice + params.targetBuyOptionPrice) / 2,
-              ),
-            );
-          }
-        } else if (!body.counterHasBuyOption) {
-          nextMeta.proposedBuyOptionPrice = null;
-        }
-      }
-      nextTension = clampTension(nextTension + evaluation.tensionDelta);
-      nextStatus = "COUNTERED";
-      messageCategory = "rejectionWage";
-    } else if (evaluation.autoAccept) {
-      autoAcceptedViaCounter = true;
-      // Do not set nextStatus here - processNegotiation below will handle
-      // the final status (COMPLETED if window is open, AGREED_PENDING_WINDOW otherwise).
-      nextMeta.acceptedDuration =
-        nextMeta.proposedDuration ?? meta.proposedDuration ?? null;
-      nextMeta.acceptedWageShareBuyerPct = proposedPct;
-      nextMeta.acceptedHasBuyOption =
-        nextMeta.proposedHasBuyOption ?? meta.proposedHasBuyOption ?? null;
-      nextMeta.acceptedBuyOptionPrice =
-        nextMeta.proposedBuyOptionPrice ?? meta.proposedBuyOptionPrice ?? null;
-      nextTension = 0;
-      messageCategory = "accepted";
-      counterWageShareBuyerPct = null;
-    } else {
-      if (typeof body.counterWageShareBuyerPct === "number") {
-        nextMeta.proposedWageShareBuyerPct = body.counterWageShareBuyerPct;
-      }
-      counterWageShareBuyerPct = evaluation.counterWageShareBuyerPct;
 
-      if (typeof body.counterHasBuyOption === "boolean") {
-        nextMeta.proposedHasBuyOption = body.counterHasBuyOption;
-        if (
-          body.counterHasBuyOption &&
-          typeof body.counterBuyOptionPrice === "number"
-        ) {
-          nextMeta.proposedBuyOptionPrice = body.counterBuyOptionPrice;
-          counterBuyOptionPrice = Math.max(
-            params.lowballBuyOptionThreshold,
-            Math.round(
-              (body.counterBuyOptionPrice + params.targetBuyOptionPrice) / 2,
-            ),
-          );
-          messageCategory = "counterOfferBuyOption";
-        } else if (!body.counterHasBuyOption) {
-          nextMeta.proposedBuyOptionPrice = null;
-          messageCategory = "counterOfferWage";
+        if (result.accepted) {
+          nextMeta.acceptedDuration = proposed;
+          nextMeta.currentPhase = "BUY_OPTION";
+          nextMeta.managerCounterDuration = null;
+          nextTension = clampTension(nextTension + result.tensionDelta);
+          nextStatus = "COUNTERED";
+          messageCategory = "durationAccepted";
+        } else {
+          nextMeta.managerCounterDuration = result.counterDuration ?? "ONE_YEAR";
+          nextTension = clampTension(nextTension + result.tensionDelta);
+          nextStatus = "COUNTERED";
+          messageCategory = "rejectionDuration";
         }
-      } else if (phase === null) {
-        messageCategory = "counterOfferWage";
+        break;
       }
-      nextTension = clampTension(nextTension + evaluation.tensionDelta);
-      nextStatus = "COUNTERED";
+
+      case "BUY_OPTION": {
+        const proposed =
+          typeof body.counterHasBuyOption === "boolean"
+            ? body.counterHasBuyOption
+            : (nextMeta.proposedHasBuyOption ?? meta.proposedHasBuyOption ?? false);
+        nextMeta.proposedHasBuyOption = proposed;
+        const result = evaluateBuyOptionDecision(
+          proposed,
+          loan.player.overall,
+          loan.player.potential,
+          ageOfPlayer(loan.player.birthdate, 25),
+          loan.squadRoleSnapshot,
+        );
+
+        if (result.accepted) {
+          nextMeta.acceptedHasBuyOption = proposed;
+          nextMeta.currentPhase = "WAGE";
+          nextMeta.managerPrefersBuyOption = null;
+          nextTension = clampTension(nextTension + result.tensionDelta);
+          nextStatus = "COUNTERED";
+          messageCategory = proposed ? "buyOptionYesAccepted" : "buyOptionNoAccepted";
+        } else {
+          nextMeta.managerPrefersBuyOption = result.managerPreference;
+          nextTension = clampTension(nextTension + result.tensionDelta);
+          nextStatus = "COUNTERED";
+          messageCategory = "buyOptionDecisionRejected";
+        }
+        break;
+      }
+
+      case "WAGE": {
+        const proposedPct =
+          typeof body.counterWageShareBuyerPct === "number"
+            ? body.counterWageShareBuyerPct
+            : (nextMeta.proposedWageShareBuyerPct ?? meta.proposedWageShareBuyerPct ?? 50);
+        nextMeta.proposedWageShareBuyerPct = proposedPct;
+        const evaluation = evaluateLoanWageOffer(proposedPct, params);
+
+        if (evaluation.shouldHangUp) {
+          lowballHangup = true;
+          nextStatus = "CANCELLED";
+          nextTension = 100;
+          messageCategory = "lowballHangup";
+        } else if (evaluation.autoAccept) {
+          nextMeta.acceptedWageShareBuyerPct = proposedPct;
+          const hasBuyOption =
+            nextMeta.acceptedHasBuyOption ??
+            meta.acceptedHasBuyOption ??
+            nextMeta.proposedHasBuyOption ??
+            meta.proposedHasBuyOption ??
+            false;
+
+          if (hasBuyOption) {
+            nextMeta.currentPhase = "BUY_OPTION_PRICE";
+            nextTension = clampTension(nextTension - 5);
+            nextStatus = "COUNTERED";
+            messageCategory = "wageAcceptedContinue";
+          } else {
+            autoAcceptedViaCounter = true;
+            nextMeta.acceptedDuration =
+              nextMeta.proposedDuration ?? meta.proposedDuration ?? loan.duration;
+            nextMeta.acceptedHasBuyOption = false;
+            nextMeta.acceptedBuyOptionPrice = null;
+            nextTension = 0;
+            messageCategory = "accepted";
+            counterWageShareBuyerPct = null;
+          }
+        } else {
+          counterWageShareBuyerPct = evaluation.counterWageShareBuyerPct;
+          nextTension = clampTension(nextTension + evaluation.tensionDelta);
+          nextStatus = "COUNTERED";
+          messageCategory = nextTension >= 90 ? "highTensionWarning" : "counterOfferWage";
+        }
+        break;
+      }
+
+      case "BUY_OPTION_PRICE": {
+        const proposedPrice =
+          typeof body.counterBuyOptionPrice === "number"
+            ? body.counterBuyOptionPrice
+            : (nextMeta.proposedBuyOptionPrice ?? meta.proposedBuyOptionPrice ?? 0);
+        nextMeta.proposedBuyOptionPrice = proposedPrice;
+        const priceResult = evaluateBuyOptionPrice(proposedPrice, params);
+
+        if (priceResult.isLowball) {
+          lowballHangup = true;
+          nextStatus = "CANCELLED";
+          nextTension = 100;
+          messageCategory = "lowballHangup";
+        } else if (priceResult.accepted) {
+          autoAcceptedViaCounter = true;
+          nextMeta.acceptedDuration =
+            nextMeta.proposedDuration ?? meta.proposedDuration ?? loan.duration;
+          nextMeta.acceptedWageShareBuyerPct =
+            nextMeta.proposedWageShareBuyerPct ??
+            meta.proposedWageShareBuyerPct ??
+            loan.wageShareBuyerPct;
+          nextMeta.acceptedHasBuyOption = true;
+          nextMeta.acceptedBuyOptionPrice = proposedPrice;
+          nextTension = 0;
+          messageCategory = "accepted";
+        } else {
+          counterBuyOptionPrice = priceResult.counterPrice ?? null;
+          nextTension = clampTension(nextTension + priceResult.tensionDelta);
+          nextStatus = "COUNTERED";
+          messageCategory = nextTension >= 90 ? "highTensionWarning" : "counterOfferBuyOption";
+        }
+        break;
+      }
+    }
+
+    if (nextTension >= 100 && !lowballHangup && !autoAcceptedViaCounter) {
+      nextStatus = "CANCELLED";
+      messageCategory = "maxTensionHangup";
+    }
+
+    if ((lowballHangup || nextStatus === "CANCELLED") && loan.negotiation) {
+      try {
+        await prisma.negotiation.update({
+          where: { id: loan.negotiation.id },
+          data: { status: "REJECTED", decidedAt: buyerSimulatedNow, tension: 100 },
+        });
+        await recordManagerRejectionCooldown({
+          prisma,
+          negotiationId: loan.negotiation.id,
+          simulatedNow: buyerSimulatedNow,
+        });
+      } catch (e) {
+        console.error("[loans/respond] counter hangup cooldown failed:", e);
+      }
     }
   }
 
@@ -654,6 +736,7 @@ export async function POST(request: Request) {
       processResult.status === "COMPLETED",
     tension: nextTension,
     message,
+    currentPhase: nextMeta.currentPhase ?? meta.currentPhase ?? "DURATION",
     proposed: {
       duration: nextMeta.proposedDuration ?? meta.proposedDuration,
       wageShareBuyerPct:
@@ -663,8 +746,15 @@ export async function POST(request: Request) {
         nextMeta.proposedHasBuyOption ?? meta.proposedHasBuyOption,
       buyOptionPrice:
         nextMeta.proposedBuyOptionPrice ?? meta.proposedBuyOptionPrice,
+      counterDuration: nextMeta.managerCounterDuration ?? meta.managerCounterDuration ?? null,
       counterWageShareBuyerPct,
       counterBuyOptionPrice,
+      managerPrefersBuyOption:
+        typeof nextMeta.managerPrefersBuyOption === "boolean"
+          ? nextMeta.managerPrefersBuyOption
+          : typeof meta.managerPrefersBuyOption === "boolean"
+            ? meta.managerPrefersBuyOption
+            : null,
     },
     buyerBudget:
       processResult && processResult.ok

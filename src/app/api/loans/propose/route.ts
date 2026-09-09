@@ -156,6 +156,7 @@ export async function POST(request: Request) {
         metadata: {
           negotiationId: negotiation.id,
           currentTension: 100,
+          currentPhase: "DURATION",
           ineligible: true,
           ineligibilityReason: eligibility.reason ?? null,
           proposedDuration: body.duration,
@@ -183,6 +184,7 @@ export async function POST(request: Request) {
       canal: isHumanRejected ? "HUMAN_EMAIL" : "AI_CALL",
       ineligible: true,
       ineligibilityReason: eligibility.reason ?? null,
+      currentPhase: "DURATION",
       greeting: message,
       schedule: {
         startsAt: windowOpensAt,
@@ -312,6 +314,7 @@ export async function POST(request: Request) {
       metadata: {
         negotiationId: negotiation.id,
         currentTension: 20,
+        currentPhase: "DURATION",
         proposedDuration: body.duration,
         proposedWageShareBuyerPct: body.wageShareBuyerPct,
         proposedHasBuyOption: body.hasBuyOption,
@@ -380,6 +383,7 @@ export async function POST(request: Request) {
     loanId: loan.id,
     negotiationId: negotiation.id,
     greeting,
+    currentPhase: "DURATION",
     schedule: { startsAt, endsAt, weeks, seasonEndAt: seasonEndDate?.endDate ?? null },
     totalWageCost,
     weeklyWage,
