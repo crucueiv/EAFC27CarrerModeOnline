@@ -5,6 +5,9 @@ import ResetSeasonButton from "./ResetSeasonButton";
 import TeamsTable from "./TeamsTable";
 import PointsConfigForm from "./PointsConfigForm";
 import ActiveTransfers from "./ActiveTransfers";
+import ActiveLoans from "./ActiveLoans";
+import ActiveNegotiations from "./ActiveNegotiations";
+import LoanedPlayers from "./LoanedPlayers";
 import UserInspector from "./UserInspector";
 import CalendarsDebug from "./CalendarsDebug";
 import WindowsDebug from "./WindowsDebug";
@@ -54,6 +57,9 @@ const TABS = [
   { id: "teams", label: "Equipos" },
   { id: "points", label: "Puntos" },
   { id: "transfers", label: "Transfers" },
+  { id: "loans", label: "Cesiones" },
+  { id: "negotiations", label: "Negociaciones" },
+  { id: "loanedPlayers", label: "Cedidos" },
   { id: "users", label: "Debug: Usuario" },
   { id: "calendars", label: "Debug: Calendarios" },
   { id: "windows", label: "Debug: Ventanas" },
@@ -120,6 +126,9 @@ export default function AdminPanel({ initialState }: AdminPanelProps) {
             />
           )}
           {activeTab === "transfers" && <ActiveTransfers onChange={refresh} />}
+          {activeTab === "loans" && <ActiveLoans onChange={refresh} />}
+          {activeTab === "negotiations" && <ActiveNegotiations onChange={refresh} />}
+          {activeTab === "loanedPlayers" && <LoanedPlayers />}
           {activeTab === "users" && <UserInspector />}
           {activeTab === "calendars" && <CalendarsDebug />}
           {activeTab === "windows" && <WindowsDebug />}

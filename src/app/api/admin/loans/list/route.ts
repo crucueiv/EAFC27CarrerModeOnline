@@ -9,27 +9,29 @@ export async function GET() {
     return NextResponse.json({ error: "Prisma no disponible" }, { status: 500 });
   }
 
-  const transfers = await prisma.transfer.findMany({
+  const loans = await prisma.loan.findMany({
     where: {
       status: {
         in: [
           "PROPOSED",
+          "COUNTERED",
           "ACCEPTED",
           "AGREED_CLUB",
           "WAITING_PLAYER_CONTRACT",
-          "CONTRACT_NEGOTIATION_PENDING",
-          "CONTRACT_NEGOTIATION_ACTIVE",
+          "COMPLETED",
+          "BUY_OPTION_TRIGGERED",
+          "RETURNED",
         ],
       },
     },
-    orderBy: { createdAt: "desc" },
+    orderBy: [{ status: "asc" }, { createdAt: "desc" }],
     take: 100,
     include: {
-      player: { select: { id: true, name: true, overall: true } },
-      buyerTeam: { select: { id: true, name: true } },
-      sellerTeam: { select: { id: true, name: true } },
+      player: { select: { id: true, name: true, overall: true, position: true } },
+      buyerTeam: { select: { id: true, name: true, budget: true, committedBudget: true } },
+      sellerTeam: { select: { id: true, name: true, budget: true, committedBudget: true } },
     },
   });
 
-  return NextResponse.json({ transfers });
+  return NextResponse.json({ loans });
 }

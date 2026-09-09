@@ -9,27 +9,26 @@ export async function GET() {
     return NextResponse.json({ error: "Prisma no disponible" }, { status: 500 });
   }
 
-  const transfers = await prisma.transfer.findMany({
+  const negotiations = await prisma.negotiation.findMany({
     where: {
       status: {
         in: [
-          "PROPOSED",
-          "ACCEPTED",
+          "PENDING_AGREEMENT",
+          "AGREED_PENDING_WINDOW",
+          "AGREED_ACTIVE",
           "AGREED_CLUB",
-          "WAITING_PLAYER_CONTRACT",
-          "CONTRACT_NEGOTIATION_PENDING",
-          "CONTRACT_NEGOTIATION_ACTIVE",
         ],
       },
     },
     orderBy: { createdAt: "desc" },
     take: 100,
     include: {
-      player: { select: { id: true, name: true, overall: true } },
+      player: { select: { id: true, name: true, overall: true, position: true } },
       buyerTeam: { select: { id: true, name: true } },
       sellerTeam: { select: { id: true, name: true } },
+      season: { select: { id: true, name: true, isTransferWindowOpen: true } },
     },
   });
 
-  return NextResponse.json({ transfers });
+  return NextResponse.json({ negotiations });
 }

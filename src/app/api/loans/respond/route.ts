@@ -20,6 +20,7 @@ import {
 import { getSimulatedCurrentDate } from "@/lib/calendar/simulatedClock";
 import { assertNotOwnPlayer } from "@/lib/transfers/ownership";
 import { releaseBudget } from "@/lib/transfers/budgetCommitment";
+import { calculatePlayerValueAndClause } from "@/lib/transfers/pricingEngine";
 
 type Body = {
   loanId: string;
@@ -90,6 +91,7 @@ export async function POST(request: Request) {
         include: {
           manager: { select: { name: true, image: true } },
           managerProfile: { select: { name: true, avatarUrl: true } },
+          league: { select: { id: true } },
         },
       },
       buyerTeam: true,
@@ -194,6 +196,7 @@ export async function POST(request: Request) {
   let counterWageShareBuyerPct: number | null = null;
   let counterBuyOptionPrice: number | null = null;
   let lowballHangup = false;
+  let autoAcceptedViaCounter = false;
 
   if (body.action === "REJECT") {
     nextStatus = "REJECTED";
@@ -232,7 +235,7 @@ export async function POST(request: Request) {
         console.error("[loans/respond] HANGUP cooldown failed:", e);
       }
     }
-  } else if (body.action === "ACCEPT") {
+  } else   if (body.action === "ACCEPT") {
     if (!loan.negotiation) {
       return NextResponse.json(
         { error: "missing-negotiation", reason: "Esta cesión no tiene una negociación asociada." },
@@ -253,7 +256,12 @@ export async function POST(request: Request) {
         { status: 409 },
       );
     }
-    nextStatus = "ACCEPTED";
+    // No marcamos `nextStatus = "ACCEPTED"` aquí. El estado final del Loan
+    // lo decide `processNegotiation` (COMPLETED si la ventana está abierta,
+    // AGREED_PENDING_WINDOW si hay que esperar a la siguiente). Si lo
+    // marcásemos como ACCEPTED antes y la transacción fallase, el Loan
+    // quedaría en un estado intermedio que no se puede reanudar.
+    nextStatus = null;
     nextMeta.acceptedDuration = meta.proposedDuration ?? null;
     nextMeta.acceptedWageShareBuyerPct = meta.proposedWageShareBuyerPct ?? null;
     nextMeta.acceptedHasBuyOption = meta.proposedHasBuyOption ?? null;
@@ -388,7 +396,9 @@ export async function POST(request: Request) {
       nextStatus = "COUNTERED";
       messageCategory = "rejectionWage";
     } else if (evaluation.autoAccept) {
-      nextStatus = "ACCEPTED";
+      autoAcceptedViaCounter = true;
+      // Do not set nextStatus here - processNegotiation below will handle
+      // the final status (COMPLETED if window is open, AGREED_PENDING_WINDOW otherwise).
       nextMeta.acceptedDuration =
         nextMeta.proposedDuration ?? meta.proposedDuration ?? null;
       nextMeta.acceptedWageShareBuyerPct = proposedPct;
@@ -478,7 +488,8 @@ export async function POST(request: Request) {
   // activa el préstamo inmediatamente si la ventana está abierta; si no,
   // deja la activación programada para la apertura de la siguiente ventana.
   let processResult: Awaited<ReturnType<typeof processNegotiation>> | null = null;
-  if (body.action === "ACCEPT" && loan.negotiation) {
+  const isAccepting = body.action === "ACCEPT" || autoAcceptedViaCounter;
+  if (isAccepting && loan.negotiation) {
     const simulatedNow = buyerSimulatedNow;
     const acceptedDuration =
       nextMeta.acceptedDuration ??
@@ -490,11 +501,54 @@ export async function POST(request: Request) {
       nextMeta.proposedWageShareBuyerPct ??
       meta.proposedWageShareBuyerPct ??
       loan.wageShareBuyerPct;
-    const weeklyWage =
+    // El weeklyWage se intenta recuperar primero desde la metadata (siempre
+    // se guarda al proponer la cesión). Si por algún motivo falta, lo
+    // recalculamos a partir del pricingEngine con los datos actuales del
+    // jugador para que la cesión siempre tenga un coste salarial coherente
+    // con las condiciones aceptadas.
+    let weeklyWage =
       typeof meta.weeklyWage === "number" && Number.isFinite(meta.weeklyWage)
         ? Math.max(0, Math.round(meta.weeklyWage))
         : 0;
-    const startsAt = loan.startsAt;
+    if (weeklyWage === 0) {
+      try {
+        const playerRatings = await prisma.matchStat.findMany({
+          where: { playerId: loan.playerId },
+          select: { rating: true },
+          orderBy: { match: { scheduledAt: "desc" } },
+          take: 10,
+        });
+        const role =
+          loan.squadRoleSnapshot === "CLAVE"
+            ? "Crucial"
+            : loan.squadRoleSnapshot === "IMPORTANTE"
+              ? "Important"
+              : "Rotation";
+        const financial = calculatePlayerValueAndClause({
+          overall: loan.player.overall,
+          potential: loan.player.potential,
+          birthdate: loan.player.birthdate,
+          position: loan.player.position,
+          internationalReputation: loan.player.internationalReputation,
+          pace: loan.player.pace,
+          shooting: loan.player.shooting,
+          passing: loan.player.passing,
+          dribbling: loan.player.dribbling,
+          defending: loan.player.defending,
+          physical: loan.player.physical,
+          role,
+          leagueFactor: loan.sellerTeam.league ? 1.2 : 1,
+          matchRatings: playerRatings.map((r) => r.rating),
+        });
+        weeklyWage = Math.max(0, Math.round(financial.weeklyWage));
+      } catch (e) {
+        console.error("[loans/respond] weeklyWage fallback failed:", e);
+      }
+    }
+    // La cesión empieza cuando se acepta, no cuando se propuso. Usamos
+    // simulatedNow como startsAt para que endsAt, weeks y el coste salarial
+    // reflejen las condiciones reales en el momento de la aceptación.
+    const startsAt = simulatedNow;
     const endsAt = computeLoanEndDate({
       startsAt,
       duration: acceptedDuration as "SHORT_TERM" | "ONE_YEAR" | "TWO_YEARS",
@@ -534,6 +588,23 @@ export async function POST(request: Request) {
           100 - acceptedWageShareBuyerPct,
         squadRole: loan.squadRoleSnapshot ?? "ROTACION",
         type: transferTypeForDuration(acceptedDuration as LoanDuration),
+      },
+    });
+
+    // Persistimos los valores aceptados (duración, %, opción de compra)
+    // y la tensión a 0 en la metadata del Loan ANTES de delegar en
+    // processNegotiation. Así, si la transacción de processNegotiation
+    // falla, el Loan conserva las condiciones acordadas y puede
+    // reintentarse la activación manualmente desde el panel admin.
+    await prisma.loan.update({
+      where: { id: loan.id },
+      data: {
+        metadata: {
+          ...nextMeta,
+          currentTension: 0,
+          weeklyWage,
+          totalWageCost,
+        },
       },
     });
 

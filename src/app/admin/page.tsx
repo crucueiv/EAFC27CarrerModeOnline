@@ -39,7 +39,16 @@ export default async function AdminPage() {
     prisma.careerGroup.count(),
     prisma.transfer.count({
       where: {
-        status: { in: ["PROPOSED", "ACCEPTED", "CONTRACT_NEGOTIATION_PENDING", "CONTRACT_NEGOTIATION_ACTIVE"] },
+        status: {
+          in: [
+            "PROPOSED",
+            "ACCEPTED",
+            "AGREED_CLUB",
+            "WAITING_PLAYER_CONTRACT",
+            "CONTRACT_NEGOTIATION_PENDING",
+            "CONTRACT_NEGOTIATION_ACTIVE",
+          ],
+        },
       },
     }),
     prisma.emailMessage.count({ where: { read: false } }),
