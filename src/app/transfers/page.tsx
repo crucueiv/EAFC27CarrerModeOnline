@@ -1,4 +1,5 @@
 import PlayerCardRow from "@/components/transfers/PlayerCardRow";
+import TransfersRefresh from "@/components/transfers/TransfersRefresh";
 import TransferFilters from "@/components/transfers/TransferFilters";
 import { auth } from "@/lib/auth";
 import { getTransferFilterOptions, getTransferSearchResults, type TransferSearchParams } from "@/lib/transfers/search";
@@ -58,6 +59,7 @@ export default async function TransfersPage({ searchParams }: { searchParams: Se
 
   return (
     <PageTitle title="Mercado de jugadores">
+    <TransfersRefresh />
     <div>
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div><h1 className="text-3xl font-bold text-[var(--theme-foreground)]">Mercado de jugadores</h1><p className="mt-2 text-[var(--theme-muted)]">Busca jugadores sin alterar fichajes ni plantillas.</p></div>

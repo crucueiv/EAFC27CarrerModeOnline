@@ -987,6 +987,28 @@ export async function finalizePlayerContract(
         data: { isLoaned: false, loanedToTeamId: null },
       });
 
+      // Si existe algún préstamo activo asociado al jugador, lo marcamos como RETURNED
+      await tx.loan.updateMany({
+        where: {
+          playerId: negotiation.playerId,
+          status: {
+            in: [
+              "PROPOSED",
+              "COUNTERED",
+              "ACCEPTED",
+              "AGREED_CLUB",
+              "WAITING_PLAYER_CONTRACT",
+              "COMPLETED",
+              "BUY_OPTION_TRIGGERED",
+            ],
+          },
+        },
+        data: {
+          status: "RETURNED",
+          completedAt: input.simulatedNow,
+        },
+      });
+
       // Al firmarse el contrato definitivamente: el comprador consume su
       // presupuesto comprometido y el vendedor recibe el pago en su
       // presupuesto líquido.

@@ -33,16 +33,16 @@ export function LoanedPlayerBadge({
   const weeks = weeksBetween(now, endsAt);
   return (
     <span
-      className="inline-flex items-center gap-1 text-[10px] font-medium text-amber-300 bg-amber-900/30 border border-amber-700/40 rounded px-1.5 py-0.5"
+      className="inline-flex items-center gap-1.5 text-xs font-bold text-white rounded px-2.5 py-1"
       title={`Cedido por ${sellerTeamName}`}
     >
-      <span aria-hidden>←</span>
+      <span aria-hidden className="text-base leading-none">←</span>
       <RivalTeamCrest
         imageUrl={sellerTeamCrestUrl}
         altText={sellerTeamName}
         primaryColor={sellerTeamPrimaryColor}
         shortName={sellerTeamShortName}
-        size={14}
+        size={30}
       />
       <span className="ml-1">
         {weeks === 0 ? "Cesión finalizada" : `${weeks} sem restantes`}

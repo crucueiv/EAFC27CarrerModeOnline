@@ -33,8 +33,6 @@ export function RivalTeamCrest({
           height: px,
           objectFit: "cover",
           borderRadius: 8,
-          background: primaryColor ?? "#0f172a",
-          border: "1px solid rgba(148,163,184,0.4)",
         }}
       />
     );
@@ -47,14 +45,12 @@ export function RivalTeamCrest({
         width: px,
         height: px,
         borderRadius: 8,
-        background: primaryColor ?? "#0f172a",
         color: "#f8fafc",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
         fontWeight: 700,
         fontSize: Math.max(10, size / 3),
-        border: "1px solid rgba(148,163,184,0.4)",
       }}
     >
       {(shortName ?? altText).slice(0, 3).toUpperCase()}

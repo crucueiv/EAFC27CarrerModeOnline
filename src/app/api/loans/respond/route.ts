@@ -570,7 +570,7 @@ export async function POST(request: Request) {
   // activa el préstamo inmediatamente si la ventana está abierta; si no,
   // deja la activación programada para la apertura de la siguiente ventana.
   let processResult: Awaited<ReturnType<typeof processNegotiation>> | null = null;
-  const isAccepting = body.action === "ACCEPT" || autoAcceptedViaCounter;
+  const isAccepting = autoAcceptedViaCounter;
   if (isAccepting && loan.negotiation) {
     const simulatedNow = buyerSimulatedNow;
     const acceptedDuration =

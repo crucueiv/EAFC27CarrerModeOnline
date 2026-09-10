@@ -307,7 +307,7 @@ export default function LoanNegotiationModal({
       ];
       if (terminalStatuses.includes(nextStatusValue)) {
         if (nextStatusValue === "COMPLETED" || nextStatusValue === "AGREED_PENDING_WINDOW") {
-          setTimeout(() => onCompleted(), 2000);
+          setTimeout(() => { window.dispatchEvent(new Event('loan-completed')); onCompleted(); }, 2000);
         }
       }
     } catch (err) {
@@ -404,7 +404,7 @@ export default function LoanNegotiationModal({
       ];
       if (terminalStatuses.includes(nextStatusValue)) {
         if (nextStatusValue === "COMPLETED" || nextStatusValue === "AGREED_PENDING_WINDOW") {
-          setTimeout(() => onCompleted(), 2000);
+          setTimeout(() => { window.dispatchEvent(new Event('loan-completed')); onCompleted(); }, 2000);
         }
       }
     } catch (err) {

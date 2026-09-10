@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { translatePosition } from "@/lib/constants/position-translation";
 import PlayerOverallBadge from "@/components/players/PlayerOverallBadge";
+import { LoanedPlayerBadge } from "@/components/transfers/LoanedPlayerBadge";
 import { PageTitle } from "@/components/providers/PageTitleProvider";
 
 const POSITION_GROUPS = [
@@ -48,9 +49,35 @@ export default async function SquadPage() {
     );
   }
 
+  const activeLoans = user.clubTeam
+    ? await prisma.loan.findMany({
+        where: {
+          buyerTeamId: user.clubTeam.id,
+          status: {
+            in: [
+              "PROPOSED",
+              "COUNTERED",
+              "ACCEPTED",
+              "AGREED_CLUB",
+              "WAITING_PLAYER_CONTRACT",
+              "COMPLETED",
+              "BUY_OPTION_TRIGGERED",
+            ],
+          },
+          endsAt: { gt: new Date() },
+        },
+        include: {
+          sellerTeam: {
+            select: { id: true, name: true, imageUrl: true, primaryColor: true, shortName: true },
+          },
+        },
+      })
+    : [];
+
   const players = user.clubTeam.rosters.map((r) => ({
     ...r.player,
     role: r.role,
+    isLoaned: r.isLoaned,
   }));
 
   const grouped = POSITION_GROUPS.map((group) => ({
@@ -113,6 +140,19 @@ export default async function SquadPage() {
                             <p className="text-xs text-[var(--theme-muted)]">{p.role === "CLAVE" ? "Titular" : p.role === "IMPORTANTE" ? "Importante" : "Rotación"}</p>
                           </div>
                         </div>
+                        {(() => {
+                          const loan = (activeLoans as Array<{ playerId: string; sellerTeam?: { name: string; imageUrl: string | null; primaryColor: string | null; shortName: string | null } | null; endsAt: Date }>).find((l) => l.playerId === p.id);
+                          if (!loan || !loan.sellerTeam) return null;
+                          return (
+                            <LoanedPlayerBadge
+                              sellerTeamName={loan.sellerTeam.name}
+                              sellerTeamCrestUrl={loan.sellerTeam.imageUrl ?? null}
+                              sellerTeamPrimaryColor={loan.sellerTeam.primaryColor ?? null}
+                              sellerTeamShortName={loan.sellerTeam.shortName ?? null}
+                              endsAtIso={loan.endsAt.toISOString()}
+                            />
+                          );
+                        })()}
                         <PlayerOverallBadge overall={p.overall} size="sm" />
                       </div>
                     );
@@ -144,6 +184,19 @@ export default async function SquadPage() {
                           <p className="text-xs text-[var(--theme-muted)]">{p.role === "CLAVE" ? "Titular" : p.role === "IMPORTANTE" ? "Importante" : "Rotación"}</p>
                         </div>
                       </div>
+                      {(() => {
+                        const loan = (activeLoans as Array<{ playerId: string; sellerTeam?: { name: string; imageUrl: string | null; primaryColor: string | null; shortName: string | null } | null; endsAt: Date }>).find((l) => l.playerId === p.id);
+                        if (!loan || !loan.sellerTeam) return null;
+                        return (
+                          <LoanedPlayerBadge
+                            sellerTeamName={loan.sellerTeam.name}
+                            sellerTeamCrestUrl={loan.sellerTeam.imageUrl ?? null}
+                            sellerTeamPrimaryColor={loan.sellerTeam.primaryColor ?? null}
+                            sellerTeamShortName={loan.sellerTeam.shortName ?? null}
+                            endsAtIso={loan.endsAt.toISOString()}
+                          />
+                        );
+                      })()}
                       <PlayerOverallBadge overall={p.overall} size="sm" />
                     </div>
                   );

@@ -219,6 +219,7 @@ type SearchPlayer = Player & {
   rosters: Array<{
     seasonId: string | null;
     role: "CLAVE" | "IMPORTANTE" | "ROTACION";
+    isLoaned: boolean;
     team: {
       id: string;
       eaId: string | null;
@@ -304,7 +305,7 @@ function serializePlayer(player: SearchPlayer): TransferPlayerResult {
         }
       : null,
     isLoanEligible:
-      currentTeam !== null && currentTeam.eaId !== "FREE_AGENTS" && player.overall < 70,
+      !currentRoster?.isLoaned && currentTeam !== null && currentTeam.eaId !== "FREE_AGENTS" && player.overall < 70,
     nationality: player.nationality
   };
 }
@@ -457,10 +458,11 @@ export async function getTransferSearchResults(input: TransferSearchParams = {})
         rosters: {
           where: { isActive: true },
           orderBy: [{ season: { startDate: "desc" } }, { id: "asc" }],
-          select: {
-            seasonId: true,
-            role: true,
-            team: {
+            select: {
+              seasonId: true,
+              role: true,
+              isLoaned: true,
+              team: {
               include: { league: { select: { id: true, eaId: true, name: true, imageUrl: true } } }
             }
           }

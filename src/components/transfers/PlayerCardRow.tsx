@@ -92,6 +92,25 @@ export default function PlayerCardRow({ player, ownClubTeamId }: { player: Trans
     };
   }, [player.id]);
 
+  // Listener único: refresca datos cuando la cesión se completa correctamente
+  useEffect(() => {
+    const handler = () => {
+      if (!player.id) return;
+      const params = new URLSearchParams({ playerId: player.id });
+      fetch(`/api/loans/active?${params.toString()}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data: { hasActiveForPlayer?: boolean; playerLoanId?: string | null; outgoing?: typeof outgoingLoan } | null) => {
+          if (data?.hasActiveForPlayer) setActiveLoanId(data.playerLoanId ?? null);
+          else setActiveLoanId(null);
+          if (data?.outgoing) setOutgoingLoan(data.outgoing);
+          else setOutgoingLoan(null);
+        })
+        .catch(() => {});
+    };
+    window.addEventListener("loan-completed", handler);
+    return () => window.removeEventListener("loan-completed", handler);
+  }, [player.id]);
+
   const avatar = player.avatarUrl || (player.eaId
     ? `https://ratings-images-prod.pulse.ea.com/FC25/full/player-portraits/p${player.eaId}.png`
     : "/player-placeholder.svg");
