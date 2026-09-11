@@ -1,25 +1,25 @@
 import { PrismaClient } from "@prisma/client";
 import { translateCountry } from "@/lib/constants/country-translations";
 import { NATIONAL_TEAMS_CONFIG, getNationalTeamFlagUrl } from "@/lib/constants/national-teams";
-import { fetchEARatingsPayload } from "@/lib/ea/ratings-client";
+const EASY_SBC_URL = "https://api-fc27.easysbc.io/squad-builder/manager-data";
+
 
 const prisma = new PrismaClient();
 
-interface EANationality {
+interface EasySBCCountry {
   id: number;
-  label: string;
-  imageUrl: string;
-  isPopular: boolean;
+  name: string;
+  abbrName: string;
 }
 
-async function fetchEANationalities(): Promise<EANationality[]> {
-  console.log("📥 Fetching EA nationalities...");
-  const data = await fetchEARatingsPayload<{
-    pageProps?: { auxData?: { defaultLocaleFilters?: { nationality?: EANationality[] } } };
-  }>();
-  const nationalities = data.pageProps?.auxData?.defaultLocaleFilters?.nationality ?? [];
-  console.log(`  Found ${nationalities.length} nationalities`);
-  return nationalities;
+async function fetchEasySBCCountries(): Promise<EasySBCCountry[]> {
+  console.log("📥 Fetching countries from easySBC...");
+  const res = await fetch(EASY_SBC_URL, { cache: "no-store" });
+  if (!res.ok) throw new Error("easySBC fetch failed: " + res.status);
+  const data = await res.json();
+  const countries = data.countries ?? [];
+  console.log("  Found " + countries.length + " countries");
+  return countries;
 }
 
 function normalizeName(name: string): string {
@@ -29,16 +29,16 @@ function normalizeName(name: string): string {
 async function main() {
   console.log("🌍 Importing Countries & NationalTeams...");
   
-  const nationalities = await fetchEANationalities();
+  const countries = await fetchEasySBCCountries();
   
   let countriesCreated = 0;
   let nationalTeamsCreated = 0;
 
-  for (const nat of nationalities) {
-    const eaId = String(nat.id);
-    const nameEN = nat.label;
+  for (const c of countries) {
+    const eaId = String(c.id);
+    const nameEN = c.name;
     const nameES = translateCountry(nameEN);
-    const flagUrl = nat.imageUrl;
+    const flagUrl = null;
     
     const countryCodeMap: Record<string, string> = {
       "Spain": "ES", "France": "FR", "Germany": "DE", "Italy": "IT", "England": "GB",
@@ -51,7 +51,7 @@ async function main() {
       "Greece": "GR", "Cyprus": "CY", "Thailand": "TH", "Bulgaria": "BG",
       "India": "IN", "UAE": "AE",
     };
-    const countryCode = countryCodeMap[nameEN] ?? null;
+    const countryCode = countryCodeMap[nameEN] ?? (c.abbrName || null);
 
     await prisma.country.upsert({
       where: { eaId },
