@@ -1,15 +1,15 @@
 # EAFC27 Career Mode Online
 
-Aplicación web multijugador de **Modo Carrera Manager Online** construida con Next.js 14 App Router, TypeScript, Tailwind CSS, Prisma ORM y PostgreSQL (Neon). Incluye autenticación Google OAuth, onboarding completo, mercado de fichajes, plantilla, calendario de partidos, sistema de correos y gestión de entrenadores vía API-Sports.
+Aplicación web multijugador de **Modo Carrera Manager Online** construida con Next.js 14 App Router, TypeScript, Tailwind CSS, Prisma ORM y PostgreSQL (Neon). Incluye autenticación Google OAuth, onboarding completo, mercado de fichajes, plantilla, calendario de partidos, sistema de correos, gestión de entrenadores vía API-Sports, préstamos, alineaciones, competiciones internacionales y panel de administración.
 
 ---
 
 ## 🏗️ Arquitectura
 
 - **`src/app/`** — Páginas del App Router y Route Handlers:
-  - Onboarding: perfil, selección de liga, selección de equipo
-  - Dashboard, Plantilla, Transferencias, Calendario, Partidos, Admin
-  - API: equipos, ligas, correos, traspasos (compra por cláusula y negociación), búsqueda de jugadores
+  - Onboarding: perfil (/onboarding/profile), selección de liga (/onboarding/league-selection), selección de equipo (/onboarding/team-selection), join-team (api/onboarding/join-team)
+  - Dashboard (/dashboard), Plantilla (/squad), Transferencias (/transfers), Calendario (/calendar), Partidos (/match/[id] y /match/[id]/lineup), Admin (/admin), Alineaciones (/lineup), Préstamos (/transfers/loans), Competencias (/competitions)
+  - API: equipos, ligas, correos, traspasos, préstamos, alineaciones, calendario, administración, cron, nacional, competiciones, jugadores, managers, auth
 - **`src/domain/`** — Lógica pura sin dependencias:
   - `simulateMatch.ts`: Motor de simulación de partidos
   - `canUserAdvance.ts`: Verificador de avance de jornada
@@ -112,6 +112,54 @@ Abre [http://localhost:3000](http://localhost:3000).
 - Mapeo `eaId → apiSportsId` desde JSON de Cloudinary (672 equipos)
 - Filtrado secundario de ligas femeninas en la API de ligas
 - Roles calculados automáticamente (85+ Clave, 77-84 Importante, <77 Rotación)
+- Formaciones iniciales (db:seed-formations) y colores (db:import-colors)
+- Nacionales (db:seed-national-teams)
+
+### 🤝 Sistema de Préstamos (Loans)
+- Propuesta de préstamo (`/loans/offer`): jugador, club objetivo, duración, opción de compra
+- Respuesta (`/loans/respond`): aceptación, rechazo o contraoferta
+- Activación (`/loans/activation`) y expiración (`/loans/expire`)
+- Email de préstamo (`/loans/email`) y respuesta a email (`/loans/email/respond`, `/loans/email/deliver`)
+- Compra de opción (`/loans/buy-option`): ejercicio de cláusula de opción de compra
+- Lista de préstamos activos (`/loans/active`) y forzar finalización (`/admin/loans/force-finish`)
+- Negociación de préstamo con motor de tensión (`loanNegotiationEngine`)
+
+### 📅 Calendario y Temporadas
+- Calendario completo por jornada con fechas de apertura y cierre (`/calendar/advance`, `api/calendar/max-allowed`)
+- Avance manual (admin) con verificación `canUserAdvance`
+- Transición de temporada (`/api/cron/season-transition`) y cierre (`season-closure`)
+- Grupos de carrera (`careerGroup`) para ligas con formato de grupos (champion, continental, relegación)
+- Fixtures deterministas (`fixture-generator`) por `(careerGroupId + seasonId)` con semilla fija
+- Promoción y relegación (`promotion-service`, `relegation-service`) según formato de liga
+- Splits especiales (`split-service`): Bélgica (`Math.ceil/2`), K League (acumulativo), Austria (`*0.5`)
+- Zonas de campeonato (`zones`): Champion (#FFD700), Continental Direct/Qualifying, Secondary, Conference, Playoff, Direct Promotion/Relegation
+- Copas nacionales (`/api/admin/domestic-cup/match/[id]`) con bracket completo (10 copas)
+
+### 🏆 Competencias Internacionales
+- Formato de 48 ligas (`catalog.ts`) con `kind`: `SINGLE_TABLE`, `SINGLE_TABLE_PLAYOFF`, `SPLIT_GROUPS`, `TWO_SHORT_TOURNAMENTS`, `CONFERENCE_PLAYOFF`
+- Cupos por coeficiente UEFA (`coefficients/`, `resolveContinentSpots.ts`) y Conmebol (`conmebol-defaults.ts`)
+- Torneos continentales: Champions League, Europa League, Conference League, Sudamericana, Libertadores (`continental-tournaments.ts`, archivos JSON participantes)
+- Argentina: zonas A/B + clásicos interzonales, Tabla Anual, cupo extra si ganó Sudamericana previa (`argentina-*.ts`)
+- Colombia: dos torneos cortos + Tabla de Reclasificación (`colombia-reclasi.ts`)
+- Calendario comprimido (MLS) con `calendarSpanWeeks` y `matchweekIntervalDays`
+
+### 🛡️ Admin y Gestión
+- Panel de administración (`/admin`) con gestión de temporadas, reseteo (`/api/admin/reset-season`), cierre (`/api/admin/seasons/[id]/close`), transición (`/api/admin/seasons/[id]/transition`)
+- Actualización de presupuesto (`/api/admin/update-budget`), puntos (`/api/admin/update-points-config`), calendarios (`/api/admin/calendars`)
+- Procesamiento de transfers pendientes (`/api/admin/process-pending-transfers`), negociación (`/api/admin/negotiations`) y cancelación (`/api/admin/negotiations/cancel`)
+- Gestión de ventanas de transferencia (`seedTransferWindows`)
+- Estado de la temporada (`/api/admin/state`), eventos (`/api/admin/events`), equipos (`/api/admin/teams`), usuarios (`/api/admin/users`, `/api/admin/users/lookup`)
+- Ratings y debug (`/api/admin/ratings`, `/api/debug/standings/[eaId]`, `/api/debug/clear-continent-cache`)
+- Fuerza de finalización de transferencias (`force-finish-transfer`), préstamos (`force-finish`), préstamos expirados (`loans/expire`)
+
+### ⚽ Simulación de Partidos
+- API de simulación (`/api/matches/simulate`) con motor determinista
+- Detalle de partido (`/match/[id]`) con alineación (`/match/[id]/lineup`)
+- Modo de partido (`match-modes.ts`) y cálculo de resultados por posición
+
+### 🌍 Nacionales y Temas
+- Equipos nacionales (`/api/national-teams`) con clasificaciones continentales
+- Temas de club (`clubTheme.ts`) y colores de ligas (`db:import-colors`)
 
 ---
 
@@ -132,7 +180,12 @@ src/
     squad/page.tsx       # Plantilla agrupada por posición
     transfers/page.tsx   # Mercado de fichajes
     calendar/page.tsx    # Calendario de partidos
+    admin/               # Panel de administración
+    lineup/page.tsx      # Alineaciones
+    transfers/loans/page.tsx # Préstamos
+    competitions/page.tsx # Competencias
     match/[id]/page.tsx  # Detalle de partido
+    match/[id]/lineup/page.tsx # Alineación del partido
     api/
       leagues/           # API de ligas (con filtro femenino)
       teams/             # API de equipos (con getOrFetchManager)
@@ -151,7 +204,7 @@ src/
   lib/
     auth.ts              # NextAuth + Google OAuth + JWT
     prisma.ts
-    managets/getOrFetchManager.ts
+    managers/getOrFetchManager.ts
     emails/templates.ts
     inbox/inboxStore.ts
     transfers/search.ts, pricingEngine.ts, negotiationEngine.ts
@@ -179,3 +232,8 @@ src/
 | `NEXTAUTH_URL` | URL base (http://localhost:3000 en dev) |
 | `EA_RATINGS_TIMEOUT_MS` | Timeout para la API de EA (default: 8000ms) |
 | `EA_IMPORT_MAX_PLAYERS` | Límite de jugadores a importar (default: 1.000.000) |
+| `EAFC_DEBUG` | Modo debug de la aplicación (opcional) |
+| `NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME` | Nombre de cloudinary para avatares |
+| `NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET` | Preset de subida de avatares |
+| `AUTH_GOOGLE_ID` / `AUTH_GOOGLE_SECRET` | Credenciales de Google Auth |
+| `AUTH_SECRET` / `AUTH_TRUST_HOST` | Configuración de autenticación interna |
